@@ -5,10 +5,27 @@ import PackageDescription
 
 let package = Package(
     name: "newsprint",
+    platforms: [
+        .macOS(.v14)
+    ],
+    products: [
+        .executable(name: "newsprint", targets: ["newsprint"]),
+        .library(name: "newsprintCore", targets: ["newsprintCore"])
+    ],
     targets: [
-        // Targets are the basic building blocks of a package, defining a module or a test suite.
-        // Targets can depend on other targets in this package and products from dependencies.
+        .target(
+            name: "newsprintCore"
+        ),
         .executableTarget(
-            name: "newsprint"),
+            name: "newsprint",
+            dependencies: ["newsprintCore"]
+        ),
+        .testTarget(
+            name: "newsprintTests",
+            dependencies: ["newsprintCore"],
+            resources: [
+                .copy("Fixtures")
+            ]
+        )
     ]
 )

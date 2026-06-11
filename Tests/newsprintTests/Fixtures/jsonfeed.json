@@ -1,0 +1,14 @@
+{
+  "version": "https://jsonfeed.org/version/1.1",
+  "title": "Example JSON",
+  "items": [
+    {
+      "id": "json-1",
+      "url": "https://example.com/json/first",
+      "title": "First JSON Feed Post",
+      "author": { "name": "JSON Author" },
+      "date_published": "2024-06-11T10:00:00Z",
+      "content_html": "<p>JSON body</p>"
+    }
+  ]
+}

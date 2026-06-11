@@ -1,0 +1,57 @@
+import Foundation
+
+public struct FeedHTTPResponse: Sendable {
+    public let data: Data
+    public let statusCode: Int
+    public let etag: String?
+    public let lastModified: String?
+
+    public var isNotModified: Bool { statusCode == 304 }
+}
+
+public enum FeedHTTPError: Error, LocalizedError {
+    case invalidResponse
+    case httpStatus(Int)
+
+    public var errorDescription: String? {
+        switch self {
+        case .invalidResponse: "Invalid server response"
+        case .httpStatus(let code): "HTTP \(code)"
+        }
+    }
+}
+
+@MainActor
+public struct FeedHTTPClient {
+    public init() {}
+
+    public func fetch(source: Source) async throws -> FeedHTTPResponse {
+        var request = URLRequest(url: source.url)
+        request.timeoutInterval = 20
+        request.setValue("Newsprint/0.1", forHTTPHeaderField: "User-Agent")
+
+        if let etag = source.etag {
+            request.setValue(etag, forHTTPHeaderField: "If-None-Match")
+        }
+
+        if let lastModified = source.lastModified {
+            request.setValue(lastModified, forHTTPHeaderField: "If-Modified-Since")
+        }
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw FeedHTTPError.invalidResponse
+        }
+
+        if (400...599).contains(httpResponse.statusCode) {
+            throw FeedHTTPError.httpStatus(httpResponse.statusCode)
+        }
+
+        return FeedHTTPResponse(
+            data: data,
+            statusCode: httpResponse.statusCode,
+            etag: httpResponse.value(forHTTPHeaderField: "ETag"),
+            lastModified: httpResponse.value(forHTTPHeaderField: "Last-Modified")
+        )
+    }
+}
