@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import newsprintCore
 
@@ -9,6 +10,9 @@ struct ArticleListView: View {
         List(articles, selection: $selectedArticle) { article in
             ArticleRow(article: article)
                 .tag(article)
+                .contextMenu {
+                    ArticleContextMenu(article: article, hackerNewsMetadata: HackerNewsMetadata(text: article.contentText ?? article.excerpt))
+                }
         }
         .overlay {
             if articles.isEmpty {
@@ -21,10 +25,17 @@ struct ArticleListView: View {
 
 private struct ArticleRow: View {
     let article: Article
+    private var hackerNewsMetadata: HackerNewsMetadata? {
+        HackerNewsMetadata(text: article.contentText ?? article.excerpt)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
+                if hackerNewsMetadata != nil {
+                    HackerNewsBadge()
+                }
+
                 Text(article.title)
                     .font(.headline)
                     .foregroundStyle(article.isRead ? .secondary : .primary)
@@ -45,7 +56,11 @@ private struct ArticleRow: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
-            if let preview = article.contentText ?? article.excerpt, !preview.isEmpty {
+            if let hackerNewsMetadata {
+                HackerNewsStatLabels(metadata: hackerNewsMetadata)
+            }
+
+            if let preview = previewText, !preview.isEmpty {
                 Text(preview)
                     .font(.callout)
                     .foregroundStyle(.secondary)
@@ -68,5 +83,12 @@ private struct ArticleRow: View {
     private var metadata: String {
         let date = article.publishedAt ?? article.fetchedAt
         return "\(article.sourceTitle) · \(date.formatted(date: .abbreviated, time: .shortened))"
+    }
+
+    private var previewText: String? {
+        if let hackerNewsMetadata {
+            return hackerNewsMetadata.authorComment
+        }
+        return article.contentText ?? article.excerpt
     }
 }

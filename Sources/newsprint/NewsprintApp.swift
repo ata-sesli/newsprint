@@ -1,9 +1,14 @@
+import AppKit
 import SwiftData
 import SwiftUI
 import newsprintCore
 
 @main
 struct NewsprintApp: App {
+    init() {
+        configureDockIcon()
+    }
+
     var body: some Scene {
         WindowGroup {
             RootView()
@@ -56,6 +61,15 @@ struct NewsprintApp: App {
                 .keyboardShortcut("o", modifiers: [])
             }
         }
+    }
+
+    private func configureDockIcon() {
+        guard let iconURL = Bundle.main.url(forResource: "AppIcon", withExtension: "icns"),
+              let image = NSImage(contentsOf: iconURL) else {
+            return
+        }
+
+        NSApplication.shared.applicationIconImage = image
     }
 }
 
