@@ -1,3 +1,4 @@
+import AppKit
 import SwiftData
 import SwiftUI
 import newsprintCore
@@ -45,6 +46,11 @@ struct ReaderView: View {
                             Link(destination: article.url) {
                                 Label("Open Original", systemImage: "safari")
                             }
+
+                            Button("Copy Link", systemImage: "link") {
+                                NSPasteboard.general.clearContents()
+                                NSPasteboard.general.setString(article.url.absoluteString, forType: .string)
+                            }
                         }
 
                         Divider()
@@ -69,4 +75,3 @@ struct ReaderView: View {
         try? modelContext.save()
     }
 }
-

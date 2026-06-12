@@ -1,3 +1,4 @@
+import AppKit
 import SwiftData
 import SwiftUI
 import newsprintCore
@@ -6,9 +7,13 @@ struct RootView: View {
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \Article.fetchedAt, order: .reverse) private var articles: [Article]
     @Query(sort: \Source.title) private var sources: [Source]
+    @Query private var settingsItems: [AppSettings]
     @State private var selection: SidebarSelection = .inbox
     @State private var selectedArticle: Article?
     @State private var refreshTask: Task<Void, Never>?
+    @State private var refreshLoopTask: Task<Void, Never>?
+    @State private var searchText = ""
+    @FocusState private var searchFocused: Bool
 
     var body: some View {
         NavigationSplitView {
@@ -17,6 +22,8 @@ struct RootView: View {
             switch selection {
             case .sources:
                 SourcesView(sources: sources, refresh: refresh)
+            case .rules:
+                RulesView()
             case .settings:
                 SettingsView()
             default:
@@ -31,26 +38,59 @@ struct RootView: View {
         .task {
             ensureSettingsAndRefreshIfNeeded()
         }
+        .searchable(text: $searchText, placement: .toolbar, prompt: "Search Articles")
+        .focused($searchFocused)
+        .onChange(of: selectedArticle?.id) {
+            markSelectedReadOnOpenIfNeeded()
+        }
+        .onChange(of: settingsItems.first?.refreshWhileOpenMinutes) {
+            startRefreshLoopIfNeeded()
+        }
         .onReceive(NotificationCenter.default.publisher(for: .newsprintRefreshAll)) { _ in
             refreshAll()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .newsprintAddSource)) { _ in
+            selection = .sources
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .newsprintFocusSearch)) { _ in
+            searchFocused = true
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .newsprintToggleRead)) { _ in
+            saveSelected { $0.isRead.toggle() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .newsprintToggleStar)) { _ in
+            saveSelected { $0.isStarred.toggle() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .newsprintToggleHidden)) { _ in
+            saveSelected { $0.isHidden.toggle() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .newsprintOpenOriginal)) { _ in
+            if let url = selectedArticle?.url {
+                NSWorkspace.shared.open(url)
+            }
         }
     }
 
     private var filteredArticles: [Article] {
-        switch selection {
+        let filter: ArticleFilter = switch selection {
         case .inbox:
-            articles.filter { !$0.isHidden }
+            .inbox
         case .unread:
-            articles.filter { !$0.isRead && !$0.isHidden }
+            .unread
+        case .today:
+            .today
         case .starred:
-            articles.filter { $0.isStarred }
+            .starred
         case .hidden:
-            articles.filter { $0.isHidden }
+            .hidden
         case .source(let id):
-            articles.filter { $0.sourceID == id && !$0.isHidden }
-        case .sources, .settings:
-            []
+            .source(id)
+        case .tag(let tag):
+            .tag(tag)
+        case .sources, .rules, .settings:
+            .inbox
         }
+        return ArticleSearchService().filter(articles: articles, filter: filter, searchText: searchText)
     }
 
     private func ensureSettingsAndRefreshIfNeeded() {
@@ -61,6 +101,7 @@ struct RootView: View {
             } else {
                 runRetentionCleanup(settings: settings)
             }
+            startRefreshLoopIfNeeded()
         } catch {
             // The UI remains usable even if settings creation fails.
         }
@@ -80,6 +121,21 @@ struct RootView: View {
         }
     }
 
+    private func startRefreshLoopIfNeeded() {
+        refreshLoopTask?.cancel()
+        guard let minutes = settingsItems.first?.refreshWhileOpenMinutes else {
+            return
+        }
+        refreshLoopTask = Task {
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(minutes * 60))
+                if !Task.isCancelled {
+                    refreshAll()
+                }
+            }
+        }
+    }
+
     private func runRetentionCleanup(settings: AppSettings) {
         do {
             let result = try RetentionEngine().cleanup(
@@ -93,14 +149,30 @@ struct RootView: View {
             // Retention errors should not block reading.
         }
     }
+
+    private func markSelectedReadOnOpenIfNeeded() {
+        guard settingsItems.first?.markReadOnOpen == true, let article = selectedArticle, !article.isRead else {
+            return
+        }
+        saveSelected { $0.isRead = true }
+    }
+
+    private func saveSelected(_ change: (Article) -> Void) {
+        guard let selectedArticle else { return }
+        change(selectedArticle)
+        try? modelContext.save()
+    }
 }
 
 enum SidebarSelection: Hashable {
     case inbox
     case unread
+    case today
     case starred
     case hidden
     case sources
+    case rules
     case settings
     case source(UUID)
+    case tag(String)
 }

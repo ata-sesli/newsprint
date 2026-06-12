@@ -25,6 +25,45 @@ public final class SwiftDataSourceRepository {
         try context.save()
     }
 
+    @discardableResult
+    public func saveIfNew(_ source: Source) throws -> Bool {
+        guard try !exists(feedURL: source.url) else {
+            return false
+        }
+        try save(source)
+        return true
+    }
+
+    public func exists(feedURL: URL) throws -> Bool {
+        let canonical = URLCanonicalizer.canonicalize(feedURL).absoluteString
+        let descriptor = FetchDescriptor<Source>()
+        return try context.fetch(descriptor).contains { source in
+            URLCanonicalizer.canonicalize(source.url).absoluteString == canonical
+        }
+    }
+
+    public func update(_ source: Source, title: String, category: String?, enabled: Bool) throws {
+        source.title = title
+        source.category = category?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        source.enabled = enabled
+        source.updatedAt = Date()
+        try context.save()
+    }
+
+    public func delete(_ source: Source) throws {
+        let sourceID = source.id
+        let articleDescriptor = FetchDescriptor<Article>(
+            predicate: #Predicate<Article> { article in
+                article.sourceID == sourceID
+            }
+        )
+        for article in try context.fetch(articleDescriptor) {
+            context.delete(article)
+        }
+        context.delete(source)
+        try context.save()
+    }
+
     public func markFetchStarted(_ source: Source, at date: Date = Date()) throws {
         source.lastFetchedAt = date
         source.updatedAt = date
@@ -49,3 +88,8 @@ public final class SwiftDataSourceRepository {
     }
 }
 
+private extension String {
+    var nilIfEmpty: String? {
+        isEmpty ? nil : self
+    }
+}

@@ -1,6 +1,6 @@
 import Foundation
 
-public enum SourceKind: String, Codable, CaseIterable, Identifiable {
+public enum SourceKind: String, Codable, CaseIterable, Identifiable, Sendable {
     case rss
     case atom
     case jsonFeed
@@ -21,4 +21,3 @@ public enum SourceKind: String, Codable, CaseIterable, Identifiable {
         }
     }
 }
-

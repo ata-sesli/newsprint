@@ -1,15 +1,39 @@
 import SwiftData
 import SwiftUI
+import UniformTypeIdentifiers
 import newsprintCore
 
 struct SettingsView: View {
     @Environment(\.modelContext) private var modelContext
     @Query private var settingsItems: [AppSettings]
+    @Query(sort: \Article.fetchedAt, order: .reverse) private var articles: [Article]
     @State private var errorMessage: String?
+    @State private var isConfirmingDeleteAll = false
+    @State private var showingStarredExporter = false
+    @State private var starredExportDocument = TextFileDocument()
 
     var body: some View {
         Form {
             if let settings = settingsItems.first {
+                Section("Refresh") {
+                    Toggle("Refresh on launch", isOn: binding(settings, \.refreshOnLaunch))
+                    Toggle("Refresh after manual command", isOn: binding(settings, \.refreshOnManualCommand))
+                    Toggle("Refresh while app is open", isOn: refreshWhileOpenEnabledBinding(for: settings))
+                    if settings.refreshWhileOpenMinutes != nil {
+                        Stepper(
+                            "Every \(settings.refreshWhileOpenMinutes ?? 30) minutes",
+                            value: refreshIntervalBinding(for: settings),
+                            in: 5...240,
+                            step: 5
+                        )
+                    }
+                }
+
+                Section("Reading") {
+                    Toggle("Open links in default browser", isOn: binding(settings, \.openLinksInDefaultBrowser))
+                    Toggle("Mark read on open", isOn: binding(settings, \.markReadOnOpen))
+                }
+
                 Section("Retention") {
                     Stepper(
                         "Keep unstarred articles for \(settings.retentionDays) days",
@@ -28,6 +52,21 @@ struct SettingsView: View {
                     }
                 }
 
+                Section("Data Ownership") {
+                    Text(databaseLocation.path)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+
+                    Button("Export Starred Articles", systemImage: "square.and.arrow.up") {
+                        exportStarredArticles()
+                    }
+
+                    Button("Delete All Local Data", systemImage: "trash", role: .destructive) {
+                        isConfirmingDeleteAll = true
+                    }
+                }
+
                 if let errorMessage {
                     Section("Error") {
                         Text(errorMessage)
@@ -43,6 +82,26 @@ struct SettingsView: View {
         .task {
             ensureSettings()
         }
+        .confirmationDialog("Delete all local Newsprint data?", isPresented: $isConfirmingDeleteAll) {
+            Button("Delete All Local Data", role: .destructive) {
+                deleteAllLocalData()
+            }
+        }
+        .fileExporter(
+            isPresented: $showingStarredExporter,
+            document: starredExportDocument,
+            contentType: .markdown,
+            defaultFilename: "newsprint-starred.md"
+        ) { result in
+            if case .failure(let error) = result {
+                errorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    private var databaseLocation: URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
+            .appending(path: "newsprint") ?? URL(fileURLWithPath: "~/Library/Application Support/newsprint")
     }
 
     private func retentionBinding(for settings: AppSettings) -> Binding<Int> {
@@ -51,6 +110,36 @@ struct SettingsView: View {
             set: { newValue in
                 settings.retentionDays = min(max(newValue, 1), 365)
                 runCleanup(settings: settings)
+            }
+        )
+    }
+
+    private func binding<Value>(_ settings: AppSettings, _ keyPath: ReferenceWritableKeyPath<AppSettings, Value>) -> Binding<Value> {
+        Binding(
+            get: { settings[keyPath: keyPath] },
+            set: { value in
+                settings[keyPath: keyPath] = value
+                saveSettings()
+            }
+        )
+    }
+
+    private func refreshWhileOpenEnabledBinding(for settings: AppSettings) -> Binding<Bool> {
+        Binding(
+            get: { settings.refreshWhileOpenMinutes != nil },
+            set: { enabled in
+                settings.refreshWhileOpenMinutes = enabled ? 30 : nil
+                saveSettings()
+            }
+        )
+    }
+
+    private func refreshIntervalBinding(for settings: AppSettings) -> Binding<Int> {
+        Binding(
+            get: { settings.refreshWhileOpenMinutes ?? 30 },
+            set: { value in
+                settings.refreshWhileOpenMinutes = min(max(value, 5), 240)
+                saveSettings()
             }
         )
     }
@@ -78,5 +167,28 @@ struct SettingsView: View {
             errorMessage = error.localizedDescription
         }
     }
-}
 
+    private func saveSettings() {
+        do {
+            try modelContext.save()
+            errorMessage = nil
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func exportStarredArticles() {
+        starredExportDocument = TextFileDocument(text: StarredArticleExporter().markdown(for: articles))
+        showingStarredExporter = true
+    }
+
+    private func deleteAllLocalData() {
+        do {
+            try DataOwnershipRepository.deleteAllLocalData(in: modelContext)
+            _ = try SettingsRepository.loadOrCreate(in: modelContext)
+            errorMessage = nil
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+}

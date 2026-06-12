@@ -51,6 +51,16 @@ private struct ArticleRow: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(3)
             }
+
+            if !article.tagNames.isEmpty {
+                HStack {
+                    ForEach(article.tagNames, id: \.self) { tag in
+                        Label(tag, systemImage: "tag")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
         }
         .padding(.vertical, 4)
     }
@@ -60,4 +70,3 @@ private struct ArticleRow: View {
         return "\(article.sourceTitle) · \(date.formatted(date: .abbreviated, time: .shortened))"
     }
 }
-

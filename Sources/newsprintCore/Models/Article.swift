@@ -69,6 +69,10 @@ public final class Article {
     }
 
     public convenience init(draft: ArticleDraft, fetchedAt: Date = Date()) {
+        self.init(draft: draft, ruleResult: RuleResult(), fetchedAt: fetchedAt)
+    }
+
+    public convenience init(draft: ArticleDraft, ruleResult: RuleResult, fetchedAt: Date = Date()) {
         let canonicalURL = URLCanonicalizer.canonicalize(draft.url)
         self.init(
             id: ArticleIDGenerator.id(for: draft),
@@ -83,8 +87,13 @@ public final class Article {
             fetchedAt: fetchedAt,
             excerpt: draft.excerpt,
             contentHTML: draft.contentHTML,
-            contentText: draft.contentText
+            contentText: draft.contentText,
+            isRead: ruleResult.isRead,
+            isStarred: ruleResult.isStarred,
+            isHidden: ruleResult.isHidden,
+            score: ruleResult.scoreDelta,
+            matchedRuleIDs: ruleResult.matchedRuleIDs.map(\.uuidString),
+            tagNames: ruleResult.tags
         )
     }
 }
-

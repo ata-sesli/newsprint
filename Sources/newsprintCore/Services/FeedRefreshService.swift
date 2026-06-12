@@ -6,8 +6,10 @@ public final class FeedRefreshService {
     private let context: ModelContext
     private let sourceRepository: SwiftDataSourceRepository
     private let articleRepository: SwiftDataArticleRepository
+    private let ruleRepository: SwiftDataRuleRepository
     private let httpClient: FeedHTTPClient
     private let parser: FeedParser
+    private let ruleEngine: RuleEngine
 
     public init(
         context: ModelContext,
@@ -17,13 +19,16 @@ public final class FeedRefreshService {
         self.context = context
         self.sourceRepository = SwiftDataSourceRepository(context: context)
         self.articleRepository = SwiftDataArticleRepository(context: context)
+        self.ruleRepository = SwiftDataRuleRepository(context: context)
         self.httpClient = httpClient
         self.parser = parser
+        self.ruleEngine = RuleEngine()
     }
 
     public func refreshAll() async {
         do {
             let sources = try sourceRepository.enabledSources()
+            NewsprintLog.feed.info("Refreshing \(sources.count) sources")
             for source in sources {
                 await refresh(source: source, runRetention: false)
             }
@@ -40,6 +45,7 @@ public final class FeedRefreshService {
     private func refresh(source: Source, runRetention: Bool) async {
         do {
             try sourceRepository.markFetchStarted(source)
+            NewsprintLog.feed.info("Refreshing source: \(source.title, privacy: .public)")
             let response = try await httpClient.fetch(source: source)
 
             if response.isNotModified {
@@ -51,16 +57,20 @@ public final class FeedRefreshService {
             }
 
             let drafts = try parser.parse(data: response.data, source: source)
+            let rules = try ruleRepository.enabledRules()
             for draft in drafts {
-                try articleRepository.insertIfNew(Article(draft: draft))
+                let result = ruleEngine.apply(rules: rules, to: draft)
+                try articleRepository.insertIfNew(Article(draft: draft, ruleResult: result))
             }
 
             try sourceRepository.markFetchSucceeded(source, response: response)
+            NewsprintLog.feed.info("Source refreshed: \(source.title, privacy: .public), drafts: \(drafts.count)")
             if runRetention {
                 try runRetentionCleanup()
             }
         } catch {
-            let message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            let message = SourceErrorFormatter.message(for: error)
+            NewsprintLog.feed.error("Source refresh failed: \(source.title, privacy: .public), \(message, privacy: .public)")
             try? sourceRepository.markFetchFailed(source, message: message)
             if runRetention {
                 try? runRetentionCleanup()
