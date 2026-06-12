@@ -29,9 +29,10 @@ struct SidebarView: View {
             Section("Manage") {
                 Label("Sources", systemImage: "slider.horizontal.3")
                     .tag(SidebarSelection.sources)
+                Label("Settings", systemImage: "gearshape")
+                    .tag(SidebarSelection.settings)
             }
         }
         .navigationTitle("Newsprint")
     }
 }
-

@@ -17,6 +17,8 @@ struct RootView: View {
             switch selection {
             case .sources:
                 SourcesView(sources: sources, refresh: refresh)
+            case .settings:
+                SettingsView()
             default:
                 ArticleListView(
                     articles: filteredArticles,
@@ -46,7 +48,7 @@ struct RootView: View {
             articles.filter { $0.isHidden }
         case .source(let id):
             articles.filter { $0.sourceID == id && !$0.isHidden }
-        case .sources:
+        case .sources, .settings:
             []
         }
     }
@@ -56,6 +58,8 @@ struct RootView: View {
             let settings = try SettingsRepository.loadOrCreate(in: modelContext)
             if settings.refreshOnLaunch {
                 refreshAll()
+            } else {
+                runRetentionCleanup(settings: settings)
             }
         } catch {
             // The UI remains usable even if settings creation fails.
@@ -75,6 +79,20 @@ struct RootView: View {
             await FeedRefreshService(context: modelContext).refresh(source: source)
         }
     }
+
+    private func runRetentionCleanup(settings: AppSettings) {
+        do {
+            let result = try RetentionEngine().cleanup(
+                context: modelContext,
+                retentionDays: settings.retentionDays
+            )
+            settings.lastRetentionCleanupAt = result.lastCleanupAt
+            settings.lastRetentionDeletedCount = result.deletedCount
+            try modelContext.save()
+        } catch {
+            // Retention errors should not block reading.
+        }
+    }
 }
 
 enum SidebarSelection: Hashable {
@@ -83,6 +101,6 @@ enum SidebarSelection: Hashable {
     case starred
     case hidden
     case sources
+    case settings
     case source(UUID)
 }
-

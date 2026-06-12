@@ -10,22 +10,27 @@ struct SourcesView: View {
     @State private var urlString = ""
     @State private var kind: SourceKind = .rss
     @State private var errorMessage: String?
+    @State private var discoveredFeeds: [DiscoveredFeed] = []
+    @State private var isDiscovering = false
 
     var body: some View {
         VStack(spacing: 0) {
             Form {
-                Section("Add Direct Feed") {
+                Section("Add Source") {
                     TextField("Title", text: $title)
-                    TextField("Feed URL", text: $urlString)
+                    TextField("Feed or Website URL", text: $urlString)
                     Picker("Kind", selection: $kind) {
                         ForEach(SourceKind.allCases) { kind in
                             Text(kind.displayName).tag(kind)
                         }
                     }
                     HStack {
-                        Button("Add Source", systemImage: "plus") {
-                            addSource()
+                        Button(isDiscovering ? "Checking..." : "Add Source", systemImage: "plus") {
+                            Task {
+                                await addSource()
+                            }
                         }
+                        .disabled(isDiscovering)
                         .buttonStyle(.borderedProminent)
 
                         if let errorMessage {
@@ -34,9 +39,35 @@ struct SourcesView: View {
                         }
                     }
                 }
+
+                if !discoveredFeeds.isEmpty {
+                    Section("Discovered Feeds") {
+                        ForEach(discoveredFeeds) { feed in
+                            HStack {
+                                VStack(alignment: .leading) {
+                                    Text(feed.title ?? feed.url.host() ?? feed.url.absoluteString)
+                                    Text(feed.url.absoluteString)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                        .textSelection(.enabled)
+                                }
+
+                                Spacer()
+
+                                Text(feed.type.displayName)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+
+                                Button("Add", systemImage: "plus.circle") {
+                                    addDiscoveredFeed(feed)
+                                }
+                            }
+                        }
+                    }
+                }
             }
             .formStyle(.grouped)
-            .frame(minHeight: 190)
+            .frame(minHeight: discoveredFeeds.isEmpty ? 190 : 330)
 
             Divider()
 
@@ -49,18 +80,37 @@ struct SourcesView: View {
         .navigationTitle("Sources")
     }
 
-    private func addSource() {
+    private func addSource() async {
         let trimmedURL = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let url = URL(string: trimmedURL), url.scheme != nil else {
             errorMessage = "Enter a valid feed URL."
             return
         }
 
+        isDiscovering = true
+        defer { isDiscovering = false }
+
+        do {
+            let result = try await FeedDiscoveryService().discover(from: url)
+            switch result {
+            case .directFeed(let feed):
+                addDiscoveredFeed(feed)
+            case .candidates(let feeds):
+                discoveredFeeds = feeds
+                errorMessage = feeds.isEmpty ? "No feed was found at that URL." : nil
+            }
+        } catch {
+            discoveredFeeds = []
+            errorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+        }
+    }
+
+    private func addDiscoveredFeed(_ feed: DiscoveredFeed) {
         let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
         let source = Source(
-            title: trimmedTitle.isEmpty ? (url.host() ?? trimmedURL) : trimmedTitle,
-            url: url,
-            kind: kind
+            title: trimmedTitle.isEmpty ? (feed.title ?? feed.url.host() ?? feed.url.absoluteString) : trimmedTitle,
+            url: feed.url,
+            kind: feed.type.sourceKind
         )
 
         modelContext.insert(source)
@@ -71,8 +121,19 @@ struct SourcesView: View {
             urlString = ""
             kind = .rss
             errorMessage = nil
+            discoveredFeeds = []
         } catch {
             errorMessage = error.localizedDescription
+        }
+    }
+}
+
+private extension DiscoveredFeedType {
+    var displayName: String {
+        switch self {
+        case .rss: "RSS"
+        case .atom: "Atom"
+        case .jsonFeed: "JSON Feed"
         }
     }
 }
@@ -128,4 +189,3 @@ private struct SourceRow: View {
         .padding(.vertical, 4)
     }
 }
-

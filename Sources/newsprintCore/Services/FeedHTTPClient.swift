@@ -26,15 +26,23 @@ public struct FeedHTTPClient {
     public init() {}
 
     public func fetch(source: Source) async throws -> FeedHTTPResponse {
-        var request = URLRequest(url: source.url)
+        try await fetch(url: source.url, etag: source.etag, lastModified: source.lastModified)
+    }
+
+    public func fetch(
+        url: URL,
+        etag: String? = nil,
+        lastModified: String? = nil
+    ) async throws -> FeedHTTPResponse {
+        var request = URLRequest(url: url)
         request.timeoutInterval = 20
         request.setValue("Newsprint/0.1", forHTTPHeaderField: "User-Agent")
 
-        if let etag = source.etag {
+        if let etag {
             request.setValue(etag, forHTTPHeaderField: "If-None-Match")
         }
 
-        if let lastModified = source.lastModified {
+        if let lastModified {
             request.setValue(lastModified, forHTTPHeaderField: "If-Modified-Since")
         }
 
