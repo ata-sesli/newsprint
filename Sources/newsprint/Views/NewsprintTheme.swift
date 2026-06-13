@@ -126,6 +126,8 @@ extension ArticleListDensity {
             8
         case .compact:
             4
+        case .newspaper:
+            18
         }
     }
 
@@ -135,6 +137,8 @@ extension ArticleListDensity {
             3
         case .compact:
             2
+        case .newspaper:
+            6
         }
     }
 
@@ -144,6 +148,63 @@ extension ArticleListDensity {
             7
         case .compact:
             4
+        case .newspaper:
+            12
+        }
+    }
+
+    var cardPadding: CGFloat {
+        switch self {
+        case .compact:
+            14
+        case .comfortable:
+            18
+        case .newspaper:
+            28
+        }
+    }
+
+    var cardCornerRadius: CGFloat {
+        switch self {
+        case .compact:
+            6
+        case .comfortable:
+            8
+        case .newspaper:
+            8
+        }
+    }
+
+    var titleScale: CGFloat {
+        switch self {
+        case .compact:
+            1.05
+        case .comfortable:
+            1.18
+        case .newspaper:
+            1.55
+        }
+    }
+
+    var expandedContentSpacing: CGFloat {
+        switch self {
+        case .compact:
+            12
+        case .comfortable:
+            16
+        case .newspaper:
+            24
+        }
+    }
+
+    var summarySpacing: CGFloat {
+        switch self {
+        case .compact:
+            10
+        case .comfortable:
+            12
+        case .newspaper:
+            16
         }
     }
 }

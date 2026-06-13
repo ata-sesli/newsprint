@@ -9,13 +9,13 @@ struct RootView: View {
     @Query private var settingsItems: [AppSettings]
     @StateObject private var viewModel = RootViewModel()
     @State private var selection: SidebarSelection = .inbox
-    @State private var selectedArticle: Article?
+    @State private var expandedArticleID: String?
+    @State private var focusedArticleID: String?
     @State private var searchText = ""
-    @AppStorage("newsprint.detailPaneCollapsed") private var detailPaneCollapsed = false
     @FocusState private var searchFocused: Bool
 
     var body: some View {
-        PersistentThreePaneSplitView(isDetailCollapsed: $detailPaneCollapsed) {
+        PersistentTwoPaneSplitView {
             NavigationStack {
                 SidebarView(selection: $selection, sources: viewModel.sources, articles: articles)
             }
@@ -25,13 +25,6 @@ struct RootView: View {
                 contentPane
             }
             .background(theme.paneBackground)
-            .searchable(text: $searchText, placement: .toolbar, prompt: "Search Articles")
-            .focused($searchFocused)
-        } detail: {
-            NavigationStack {
-                detailPane
-            }
-            .background(theme.readerBackground)
         }
         .task {
             viewModel.bootstrap(context: modelContext, settings: settingsItems.first)
@@ -54,11 +47,8 @@ struct RootView: View {
                     .padding(.bottom, 10)
             }
         }
-        .onChange(of: selectedArticle?.id) {
-            if selectedArticle != nil {
-                detailPaneCollapsed = false
-            }
-            markSelectedReadOnOpenIfNeeded()
+        .onChange(of: expandedArticleID) {
+            markExpandedReadOnOpenIfNeeded()
         }
         .onChange(of: settingsItems.first?.refreshWhileOpenMinutes) {
             viewModel.startRefreshLoop(
@@ -85,12 +75,9 @@ struct RootView: View {
             saveSelected(.toggleHidden)
         }
         .onReceive(NotificationCenter.default.publisher(for: .newsprintOpenOriginal)) { _ in
-            if let url = selectedArticle?.url {
+            if let url = actionArticle?.url {
                 NSWorkspace.shared.open(url)
             }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .newsprintToggleReaderPane)) { _ in
-            detailPaneCollapsed.toggle()
         }
     }
 
@@ -108,23 +95,17 @@ struct RootView: View {
         case .settings:
             SettingsView()
         default:
-            ArticleListView(
+            ArticleFeedView(
                 articles: filteredArticles,
-                selectedArticle: $selectedArticle
-            )
-        }
-    }
-
-    @ViewBuilder
-    private var detailPane: some View {
-        if selectedArticle == nil {
-            TodaySummaryView(
-                articles: articles,
+                allArticles: articles,
                 sources: viewModel.sources,
-                selectedArticle: $selectedArticle
+                selection: $selection,
+                searchText: $searchText,
+                searchFocused: $searchFocused,
+                expandedArticleID: $expandedArticleID,
+                focusedArticleID: $focusedArticleID,
+                onArticleAction: saveArticle
             )
-        } else {
-            ReaderView(article: selectedArticle)
         }
     }
 
@@ -166,16 +147,29 @@ struct RootView: View {
         return ArticleSearchService().filter(articles: articles, filter: filter, searchText: searchText)
     }
 
-    private func markSelectedReadOnOpenIfNeeded() {
-        guard settingsItems.first?.markReadOnOpen == true, let article = selectedArticle, !article.isRead else {
+    private var actionArticle: Article? {
+        let id = expandedArticleID ?? focusedArticleID
+        guard let id else { return nil }
+        return articles.first { $0.id == id }
+    }
+
+    private func markExpandedReadOnOpenIfNeeded() {
+        guard settingsItems.first?.markReadOnOpen == true,
+              let expandedArticleID,
+              let article = articles.first(where: { $0.id == expandedArticleID }),
+              !article.isRead else {
             return
         }
         viewModel.saveArticleState(article, mutation: .markRead, context: modelContext)
     }
 
     private func saveSelected(_ mutation: ArticleStateMutation) {
-        guard let selectedArticle else { return }
-        viewModel.saveArticleState(selectedArticle, mutation: mutation, context: modelContext)
+        guard let article = actionArticle else { return }
+        saveArticle(article, mutation)
+    }
+
+    private func saveArticle(_ article: Article, _ mutation: ArticleStateMutation) {
+        viewModel.saveArticleState(article, mutation: mutation, context: modelContext)
     }
 }
 

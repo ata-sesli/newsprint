@@ -77,19 +77,52 @@ struct HackerNewsBadge: View {
 }
 
 struct HackerNewsStatLabels: View {
+    @Environment(\.newsprintTheme) private var theme
     let metadata: HackerNewsMetadata
 
     var body: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 8) {
             if let points = metadata.points {
-                Label("\(points) \(points == 1 ? "point" : "points")", systemImage: "arrowtriangle.up.fill")
+                HackerNewsStatBadge(
+                    value: points,
+                    systemImage: "arrowtriangle.up.fill",
+                    accessibilityLabel: "\(points) \(points == 1 ? "point" : "points")"
+                )
             }
 
             if let commentCount = metadata.commentCount {
-                Label("\(commentCount) \(commentCount == 1 ? "comment" : "comments")", systemImage: "text.bubble")
+                HackerNewsStatBadge(
+                    value: commentCount,
+                    systemImage: "text.bubble",
+                    accessibilityLabel: "\(commentCount) \(commentCount == 1 ? "comment" : "comments")"
+                )
             }
         }
-        .font(.caption)
-        .foregroundStyle(.secondary)
+    }
+}
+
+private struct HackerNewsStatBadge: View {
+    @Environment(\.newsprintTheme) private var theme
+    let value: Int
+    let systemImage: String
+    let accessibilityLabel: String
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: systemImage)
+                .font(.callout.weight(.semibold))
+            Text("\(value)")
+                .font(.callout.weight(.semibold))
+                .monospacedDigit()
+        }
+        .foregroundStyle(theme.metadata)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .background(theme.readerSurface.opacity(0.65), in: RoundedRectangle(cornerRadius: 7))
+        .overlay {
+            RoundedRectangle(cornerRadius: 7)
+                .stroke(Color(nsColor: .separatorColor).opacity(0.22))
+        }
+        .accessibilityLabel(accessibilityLabel)
     }
 }

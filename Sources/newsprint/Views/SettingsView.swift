@@ -22,19 +22,19 @@ struct SettingsView: View {
                         }
                     }
 
-                    Picker("Reader font", selection: readerFontBinding(for: settings)) {
+                    Picker("Feed font", selection: readerFontBinding(for: settings)) {
                         ForEach(ReaderFontChoice.allCases, id: \.self) { font in
                             Text(font.displayName).tag(font)
                         }
                     }
 
                     Stepper(
-                        "Reader font size: \(settings.readerFontSize)",
+                        "Feed font size: \(settings.readerFontSize)",
                         value: readerFontSizeBinding(for: settings),
                         in: AppSettings.readerFontSizeRange
                     )
 
-                    Picker("Article list density", selection: densityBinding(for: settings)) {
+                    Picker("Feed card size", selection: densityBinding(for: settings)) {
                         ForEach(ArticleListDensity.allCases, id: \.self) { density in
                             Text(density.displayName).tag(density)
                         }

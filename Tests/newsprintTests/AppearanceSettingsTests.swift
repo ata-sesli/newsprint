@@ -8,6 +8,7 @@ import Testing
     #expect(settings.readerFontChoice == .system)
     #expect(settings.readerFontSize == 17)
     #expect(settings.articleListDensity == .comfortable)
+    #expect(ArticleListDensity.newspaper.displayName == "Newspaper")
 }
 
 @Test func appSettingsAppearanceFallsBackForInvalidRawValues() {

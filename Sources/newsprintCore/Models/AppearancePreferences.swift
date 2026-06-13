@@ -43,6 +43,7 @@ public enum ReaderFontChoice: String, Codable, CaseIterable, Sendable {
 public enum ArticleListDensity: String, Codable, CaseIterable, Sendable {
     case comfortable
     case compact
+    case newspaper
 
     public var displayName: String {
         switch self {
@@ -50,6 +51,8 @@ public enum ArticleListDensity: String, Codable, CaseIterable, Sendable {
             "Comfortable"
         case .compact:
             "Compact"
+        case .newspaper:
+            "Newspaper"
         }
     }
 }

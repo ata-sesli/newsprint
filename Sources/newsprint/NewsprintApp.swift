@@ -62,11 +62,6 @@ struct NewsprintApp: App {
                     NotificationCenter.default.post(name: .newsprintOpenOriginal, object: nil)
                 }
                 .keyboardShortcut("o", modifiers: [])
-
-                Button("Toggle Reader Pane") {
-                    NotificationCenter.default.post(name: .newsprintToggleReaderPane, object: nil)
-                }
-                .keyboardShortcut("r", modifiers: [.command, .option])
             }
         }
     }
@@ -150,5 +145,4 @@ extension Notification.Name {
     static let newsprintToggleStar = Notification.Name("newsprintToggleStar")
     static let newsprintToggleHidden = Notification.Name("newsprintToggleHidden")
     static let newsprintOpenOriginal = Notification.Name("newsprintOpenOriginal")
-    static let newsprintToggleReaderPane = Notification.Name("newsprintToggleReaderPane")
 }
