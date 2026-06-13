@@ -74,7 +74,7 @@ public struct ReadableArticleExtractor: Sendable {
 
         let byline = firstMetaContent(named: "author", in: cleaned)
         let siteName = firstMetaContent(named: "og:site_name", in: cleaned) ?? url.host()
-        let sanitized = sanitize(selected, baseURL: url)
+        let sanitized = ArticleReaderHTMLSanitizer.sanitize(selected, baseURL: url)
 
         return ReadableArticle(
             title: title,
@@ -218,9 +218,24 @@ public enum ArticleReaderContentPolicy {
             return nil
         }
 
-        let rawText = article.contentText ?? article.excerpt ?? HTMLTextExtractor.text(fromHTML: article.contentHTML)
-        guard let text = HTMLTextExtractor.text(fromHTML: rawText), text.count >= minimumTextLength else {
-            return nil
+        if let contentHTML = article.contentHTML {
+            let sanitized = ArticleReaderHTMLSanitizer.sanitize(contentHTML, baseURL: ArticlePreviewTarget.url(for: article) ?? article.url)
+            if let text = HTMLTextExtractor.text(fromHTML: Optional(sanitized)), text.count >= minimumTextLength {
+                return ReadableArticle(
+                    title: article.title,
+                    byline: article.author,
+                    siteName: article.sourceTitle,
+                    url: ArticlePreviewTarget.url(for: article) ?? article.url,
+                    html: sanitized,
+                    text: text
+                )
+            }
+        }
+
+        guard let rawText = article.contentText ?? article.excerpt,
+              let text = HTMLTextExtractor.textPreservingParagraphBreaks(fromHTML: rawText),
+              text.count >= minimumTextLength else {
+                return nil
         }
 
         return ReadableArticle(
@@ -228,7 +243,7 @@ public enum ArticleReaderContentPolicy {
             byline: article.author,
             siteName: article.sourceTitle,
             url: ArticlePreviewTarget.url(for: article) ?? article.url,
-            html: "<p>\(escapeHTML(text))</p>",
+            html: ArticleReaderHTMLSanitizer.paragraphHTML(fromPlainText: text),
             text: text
         )
     }
@@ -248,11 +263,129 @@ public enum ArticleReaderContentPolicy {
         return URL(string: "https://raw.githubusercontent.com/\(components[0])/\(components[1])/HEAD/README.md")
     }
 
+}
+
+public enum ArticleReaderHTMLSanitizer {
+    private static let allowedTags: Set<String> = ["p", "h1", "h2", "h3", "h4", "ul", "ol", "li", "blockquote", "pre", "code", "strong", "b", "em", "i", "a", "br", "img"]
+
+    public static func sanitize(_ html: String, baseURL: URL) -> String {
+        let cleaned = removeUnwantedBlocks(from: html)
+        guard let regex = try? NSRegularExpression(pattern: #"(?is)<\s*(/?)\s*([a-z0-9]+)([^>]*)>"#) else {
+            return cleaned
+        }
+
+        var result = ""
+        var cursor = cleaned.startIndex
+        let range = NSRange(cleaned.startIndex..<cleaned.endIndex, in: cleaned)
+        for match in regex.matches(in: cleaned, range: range) {
+            guard let fullRange = Range(match.range(at: 0), in: cleaned),
+                  let slashRange = Range(match.range(at: 1), in: cleaned),
+                  let tagRange = Range(match.range(at: 2), in: cleaned),
+                  let attrRange = Range(match.range(at: 3), in: cleaned) else {
+                continue
+            }
+
+            result += cleaned[cursor..<fullRange.lowerBound]
+            let tag = cleaned[tagRange].lowercased()
+            let isClosing = !cleaned[slashRange].isEmpty
+            if allowedTags.contains(String(tag)) {
+                result += replacementTag(tag: String(tag), attributes: String(cleaned[attrRange]), isClosing: isClosing, baseURL: baseURL)
+            }
+            cursor = fullRange.upperBound
+        }
+        result += cleaned[cursor..<cleaned.endIndex]
+
+        return result
+            .replacingOccurrences(of: #"(?is)<!--.*?-->"#, with: "", options: .regularExpression)
+            .replacingOccurrences(of: #">\s+<"#, with: "><", options: .regularExpression)
+            .replacingOccurrences(of: #"\s{2,}"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    public static func paragraphHTML(fromPlainText text: String) -> String {
+        let paragraphs = text
+            .components(separatedBy: "\n\n")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+
+        return paragraphs
+            .map { "<p>\(escapeHTML($0))</p>" }
+            .joined(separator: "\n")
+    }
+
+    public static func preformattedHTML(fromPlainText text: String) -> String {
+        "<pre><code>\(escapeHTML(text))</code></pre>"
+    }
+
+    private static func removeUnwantedBlocks(from html: String) -> String {
+        var output = html
+        for pattern in [
+            #"(?is)<(script|style|noscript|svg|iframe|form|nav|footer|header|aside)\b[^>]*>.*?</\1>"#,
+            #"(?is)<([a-z0-9]+)\b[^>]*(?:class|id)=["'][^"']*(?:ad-|ads|advert|promo|subscribe|newsletter|cookie|related|sidebar)[^"']*["'][^>]*>.*?</\1>"#
+        ] {
+            output = output.replacingOccurrences(of: pattern, with: " ", options: .regularExpression)
+        }
+        return output
+    }
+
+    private static func replacementTag(tag: String, attributes: String, isClosing: Bool, baseURL: URL) -> String {
+        if isClosing {
+            return tag == "br" ? "" : "</\(tag)>"
+        }
+        if tag == "br" {
+            return "<br>"
+        }
+        if tag == "img", let src = firstAttribute("src", in: attributes), let absoluteURL = URL(string: src, relativeTo: baseURL)?.absoluteURL, isAllowedImage(absoluteURL) {
+            let alt = firstAttribute("alt", in: attributes).map { " alt=\"\(escapeHTML($0))\"" } ?? ""
+            return "<img src=\"\(escapeHTML(absoluteURL.absoluteString))\"\(alt)>"
+        }
+        if tag == "img" {
+            return ""
+        }
+        if tag == "a", let href = firstAttribute("href", in: attributes), let absoluteURL = URL(string: href, relativeTo: baseURL)?.absoluteURL, isAllowedLink(absoluteURL) {
+            return "<a href=\"\(escapeHTML(absoluteURL.absoluteString))\">"
+        }
+        if tag == "a" {
+            return "<a>"
+        }
+        return "<\(tag)>"
+    }
+
+    private static func firstAttribute(_ name: String, in text: String) -> String? {
+        firstMatch(#"(?i)\b\#(name)\s*=\s*["']([^"']+)["']"#, in: text)
+    }
+
+    private static func firstMatch(_ pattern: String, in text: String) -> String? {
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
+        let range = NSRange(text.startIndex..<text.endIndex, in: text)
+        guard let match = regex.firstMatch(in: text, range: range),
+              match.numberOfRanges > 1,
+              let matchRange = Range(match.range(at: 1), in: text) else {
+            return nil
+        }
+        return String(text[matchRange]).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func isAllowedLink(_ url: URL) -> Bool {
+        guard let scheme = url.scheme?.lowercased() else {
+            return false
+        }
+        return ["http", "https", "mailto"].contains(scheme)
+    }
+
+    private static func isAllowedImage(_ url: URL) -> Bool {
+        guard let scheme = url.scheme?.lowercased() else {
+            return false
+        }
+        return ["http", "https"].contains(scheme)
+    }
+
     private static func escapeHTML(_ value: String) -> String {
         value
             .replacingOccurrences(of: "&", with: "&amp;")
             .replacingOccurrences(of: "<", with: "&lt;")
             .replacingOccurrences(of: ">", with: "&gt;")
+            .replacingOccurrences(of: "\"", with: "&quot;")
     }
 }
 

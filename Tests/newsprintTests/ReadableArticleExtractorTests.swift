@@ -101,6 +101,93 @@ import Testing
     #expect(readable.text.contains("When you're working through a backlog-latency matters."))
 }
 
+@Test func readerPolicyPreservesStructuredLocalContentHTML() throws {
+    let body = String(repeating: "<p>Local paragraph with enough article text to qualify.</p>", count: 16)
+    let article = Article(
+        id: "structured-blog",
+        sourceID: UUID(),
+        sourceTitle: "Engineering Blog",
+        title: "Structured Feed",
+        url: URL(string: "https://example.com/structured")!,
+        contentHTML: """
+        <article>
+          <script>track()</script>
+          <h2>Section Heading</h2>
+          \(body)
+          <ul><li>First item</li><li>Second item</li></ul>
+          <blockquote>Quoted idea</blockquote>
+          <pre><code>let value = 1</code></pre>
+        </article>
+        """
+    )
+
+    let readable = try #require(ArticleReaderContentPolicy.localReadableArticle(for: article))
+
+    #expect(readable.html.contains("<h2>Section Heading</h2>"))
+    #expect(readable.html.contains("<ul><li>First item</li><li>Second item</li></ul>"))
+    #expect(readable.html.contains("<blockquote>Quoted idea</blockquote>"))
+    #expect(readable.html.contains("<pre><code>let value = 1</code></pre>"))
+    #expect(!readable.html.contains("<script"))
+}
+
+@Test func readerPolicyConvertsPlainLocalTextIntoParagraphs() throws {
+    let first = String(repeating: "First paragraph sentence. ", count: 18)
+    let second = String(repeating: "Second paragraph sentence. ", count: 18)
+    let article = Article(
+        id: "plain-blog",
+        sourceID: UUID(),
+        sourceTitle: "Plain Blog",
+        title: "Plain Feed",
+        url: URL(string: "https://example.com/plain")!,
+        contentText: "\(first)\n\n\(second)"
+    )
+
+    let readable = try #require(ArticleReaderContentPolicy.localReadableArticle(for: article))
+
+    #expect(readable.html.contains("</p>\n<p>"))
+    #expect(readable.html.contains("First paragraph sentence."))
+    #expect(readable.html.contains("Second paragraph sentence."))
+}
+
+@Test func readerHTMLSanitizerRemovesUnsafeTagsHandlersAndLinks() {
+    let html = """
+    <article>
+      <p onclick="steal()">Safe text <a href="javascript:alert(1)" onmouseover="track()">bad link</a></p>
+      <iframe src="https://tracker.example"></iframe>
+      <form><input name="email"></form>
+      <style>body { display:none }</style>
+    </article>
+    """
+
+    let sanitized = ArticleReaderHTMLSanitizer.sanitize(html, baseURL: URL(string: "https://example.com/post")!)
+
+    #expect(sanitized.contains("<p>Safe text <a>bad link</a></p>"))
+    #expect(!sanitized.contains("onclick"))
+    #expect(!sanitized.contains("javascript:"))
+    #expect(!sanitized.contains("<iframe"))
+    #expect(!sanitized.contains("<form"))
+    #expect(!sanitized.contains("<style"))
+}
+
+@Test func readerHTMLSanitizerPreservesSafeImagesAndRemovesUnsafeImageSources() {
+    let html = """
+    <article>
+      <p>Before image.</p>
+      <img src="/images/chart.png" alt="Latency chart" onclick="track()">
+      <img src="javascript:alert(1)" alt="Bad image">
+      <p>After image.</p>
+    </article>
+    """
+
+    let sanitized = ArticleReaderHTMLSanitizer.sanitize(html, baseURL: URL(string: "https://example.com/post")!)
+
+    #expect(sanitized.contains("<img src=\"https://example.com/images/chart.png\" alt=\"Latency chart\">"))
+    #expect(!sanitized.contains("javascript:"))
+    #expect(!sanitized.contains("onclick"))
+    #expect(sanitized.contains("<p>Before image.</p>"))
+    #expect(sanitized.contains("<p>After image.</p>"))
+}
+
 @Test func readerPolicyDoesNotPreferHackerNewsMetadataAsLocalArticle() {
     let article = Article(
         id: "hn-local",

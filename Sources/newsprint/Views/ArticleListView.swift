@@ -337,6 +337,10 @@ struct FeedControlHeader: View {
     @Binding var isPreviewCollapsed: Bool
     var searchFocused: FocusState<Bool>.Binding
 
+    private var usesCompactControls: Bool {
+        !isPreviewCollapsed
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: density.summarySpacing) {
             HStack(alignment: .top) {
@@ -354,23 +358,29 @@ struct FeedControlHeader: View {
                 Spacer()
 
                 HStack {
-                    Button("Refresh All", systemImage: "arrow.clockwise") {
+                    Button {
                         NotificationCenter.default.post(name: .newsprintRefreshAll, object: nil)
+                    } label: {
+                        headerLabel("Refresh All", systemImage: "arrow.clockwise")
                     }
                     .buttonStyle(HeaderActionButtonStyle())
+                    .help("Refresh All")
 
-                    Button(isPreviewCollapsed ? "Show Preview" : "Hide Preview", systemImage: "sidebar.right") {
+                    Button {
                         isPreviewCollapsed.toggle()
+                    } label: {
+                        headerLabel(isPreviewCollapsed ? "Show Preview" : "Hide Preview", systemImage: "sidebar.right")
                     }
                     .buttonStyle(HeaderActionButtonStyle())
+                    .help(isPreviewCollapsed ? "Show Preview" : "Hide Preview")
                 }
             }
 
             HStack(spacing: 10) {
-                SummaryPill(title: "Today", value: counts.today, systemImage: "calendar")
-                SummaryPill(title: "Unread", value: counts.unread, systemImage: "circle")
-                SummaryPill(title: "Starred", value: counts.starred, systemImage: "star")
-                SummaryPill(title: "Hidden", value: counts.hidden, systemImage: "eye.slash")
+                SummaryPill(title: "Today", value: counts.today, systemImage: "calendar", isCompact: usesCompactControls)
+                SummaryPill(title: "Unread", value: counts.unread, systemImage: "circle", isCompact: usesCompactControls)
+                SummaryPill(title: "Starred", value: counts.starred, systemImage: "star", isCompact: usesCompactControls)
+                SummaryPill(title: "Hidden", value: counts.hidden, systemImage: "eye.slash", isCompact: usesCompactControls)
             }
 
             ViewThatFits(in: .horizontal) {
@@ -428,9 +438,10 @@ struct FeedControlHeader: View {
                 Button {
                     selection = filter.selection
                 } label: {
-                    Label(filter.title, systemImage: filter.systemImage)
+                    chipLabel(filter.title, systemImage: filter.systemImage)
                 }
                 .buttonStyle(FilterChipButtonStyle(isSelected: selection == filter.selection))
+                .help(filter.title)
             }
 
             sourcePicker
@@ -461,9 +472,10 @@ struct FeedControlHeader: View {
                 Button {
                     feedSort = sort
                 } label: {
-                    Label(sort.displayName, systemImage: sort == .hot ? "flame" : "clock")
+                    chipLabel(sort.displayName, systemImage: sort == .hot ? "flame" : "clock")
                 }
                 .buttonStyle(FilterChipButtonStyle(isSelected: feedSort == sort))
+                .help(sort.displayName)
             }
         }
     }
@@ -491,10 +503,31 @@ struct FeedControlHeader: View {
                 }
             }
         } label: {
-            Label(sourcePickerTitle, systemImage: "dot.radiowaves.left.and.right")
+            chipLabel(sourcePickerTitle, systemImage: "dot.radiowaves.left.and.right")
         }
         .menuStyle(.button)
         .buttonStyle(FilterChipButtonStyle(isSelected: isSourceFilterSelected))
+        .help(sourcePickerTitle)
+    }
+
+    @ViewBuilder
+    private func chipLabel(_ title: String, systemImage: String) -> some View {
+        if usesCompactControls {
+            Image(systemName: systemImage)
+                .accessibilityLabel(title)
+        } else {
+            Label(title, systemImage: systemImage)
+        }
+    }
+
+    @ViewBuilder
+    private func headerLabel(_ title: String, systemImage: String) -> some View {
+        if usesCompactControls {
+            Image(systemName: systemImage)
+                .accessibilityLabel(title)
+        } else {
+            Label(title, systemImage: systemImage)
+        }
     }
 
     private var contextualFilter: String? {
@@ -597,6 +630,7 @@ private struct SummaryPill: View {
     let title: String
     let value: Int
     let systemImage: String
+    let isCompact: Bool
 
     var body: some View {
         HStack(spacing: 8) {
@@ -604,9 +638,12 @@ private struct SummaryPill: View {
                 .foregroundStyle(theme.tint)
             Text("\(value)")
                 .font(.headline)
-            Text(title)
-                .font(.caption)
-                .foregroundStyle(theme.metadata)
+                .monospacedDigit()
+            if !isCompact {
+                Text(title)
+                    .font(.caption)
+                    .foregroundStyle(theme.metadata)
+            }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)

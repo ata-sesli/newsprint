@@ -71,21 +71,20 @@ struct RootView: View {
         .onChange(of: selection) {
             expandedArticleID = nil
             focusedArticleID = nil
-            previewArticleID = nil
             if selection.isArticleFeedSelection {
                 reloadFeed()
+            } else {
+                previewArticleID = nil
             }
         }
         .onChange(of: searchText) {
             expandedArticleID = nil
-            previewArticleID = nil
             if selection.isArticleFeedSelection {
                 reloadFeed()
             }
         }
         .onChange(of: feedSort) {
             expandedArticleID = nil
-            previewArticleID = nil
             if selection.isArticleFeedSelection {
                 reloadFeed()
             }

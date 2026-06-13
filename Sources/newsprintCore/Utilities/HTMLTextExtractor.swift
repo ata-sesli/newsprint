@@ -9,6 +9,42 @@ public enum HTMLTextExtractor {
             .replacingOccurrences(of: "(?i)</p>", with: " ", options: .regularExpression)
             .replacingOccurrences(of: "<[^>]+>", with: " ", options: .regularExpression)
 
+        text = decodeEntities(in: text)
+
+        let normalized = text
+            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        return normalized.isEmpty ? nil : normalized
+    }
+
+    public static func text(fromHTML html: String) -> String {
+        text(fromHTML: Optional(html)) ?? ""
+    }
+
+    public static func textPreservingParagraphBreaks(fromHTML html: String?) -> String? {
+        guard let html, !html.isEmpty else { return nil }
+
+        var text = html
+            .replacingOccurrences(of: "(?i)<br\\s*/?>", with: "\n", options: .regularExpression)
+            .replacingOccurrences(of: "(?i)</(?:p|div|section|article|h[1-6]|li|blockquote)>", with: "\n\n", options: .regularExpression)
+            .replacingOccurrences(of: "<[^>]+>", with: " ", options: .regularExpression)
+
+        text = decodeEntities(in: text)
+
+        let paragraphs = text
+            .components(separatedBy: "\n\n")
+            .map {
+                $0.replacingOccurrences(of: "[ \\t\\n\\r]+", with: " ", options: .regularExpression)
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+            .filter { !$0.isEmpty }
+
+        guard !paragraphs.isEmpty else { return nil }
+        return paragraphs.joined(separator: "\n\n")
+    }
+
+    private static func decodeEntities(in text: String) -> String {
         let entities = [
             "&nbsp;": " ",
             "&amp;": "&",
@@ -28,21 +64,12 @@ public enum HTMLTextExtractor {
             "&trade;": "(tm)"
         ]
 
+        var output = text
         for (entity, replacement) in entities {
-            text = text.replacingOccurrences(of: entity, with: replacement)
+            output = output.replacingOccurrences(of: entity, with: replacement)
         }
 
-        text = normalizeSmartPunctuation(decodeNumericEntities(in: text))
-
-        let normalized = text
-            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-
-        return normalized.isEmpty ? nil : normalized
-    }
-
-    public static func text(fromHTML html: String) -> String {
-        text(fromHTML: Optional(html)) ?? ""
+        return normalizeSmartPunctuation(decodeNumericEntities(in: output))
     }
 
     private static func decodeNumericEntities(in text: String) -> String {
