@@ -58,13 +58,14 @@ public final class FeedRefreshService {
 
             let drafts = try parser.parse(data: response.data, source: source)
             let rules = try ruleRepository.enabledRules()
-            for draft in drafts {
+            let articles = drafts.map { draft in
                 let result = ruleEngine.apply(rules: rules, to: draft)
-                try articleRepository.insertIfNew(Article(draft: draft, ruleResult: result))
+                return Article(draft: draft, ruleResult: result)
             }
+            let insertResult = try articleRepository.insertNewArticles(articles)
 
             try sourceRepository.markFetchSucceeded(source, response: response)
-            NewsprintLog.feed.info("Source refreshed: \(source.title, privacy: .public), drafts: \(drafts.count)")
+            NewsprintLog.feed.info("Source refreshed: \(source.title, privacy: .public), drafts: \(drafts.count), inserted: \(insertResult.insertedCount), skipped: \(insertResult.skippedCount)")
             if runRetention {
                 try runRetentionCleanup()
             }

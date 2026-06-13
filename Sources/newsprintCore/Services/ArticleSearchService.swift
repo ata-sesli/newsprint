@@ -1,5 +1,21 @@
 import Foundation
 
+public enum ArticleFeedSort: String, Codable, CaseIterable, Sendable, Identifiable {
+    case hot
+    case newest
+
+    public var id: String { rawValue }
+
+    public var displayName: String {
+        switch self {
+        case .hot:
+            "Hot"
+        case .newest:
+            "Newest"
+        }
+    }
+}
+
 public enum ArticleFilter: Hashable, Sendable {
     case inbox
     case unread
@@ -17,6 +33,7 @@ public struct ArticleSearchService {
         articles: [Article],
         filter: ArticleFilter,
         searchText: String,
+        sort: ArticleFeedSort = .hot,
         now: Date = Date()
     ) -> [Article] {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -29,7 +46,9 @@ public struct ArticleSearchService {
             .filter { article in
                 query.isEmpty || searchableText(for: article).contains(query)
             }
-            .sorted(by: sortArticles)
+            .sorted { lhs, rhs in
+                sortArticles(lhs, rhs, sort: sort)
+            }
     }
 
     private func matches(filter: ArticleFilter, article: Article, startOfToday: Date) -> Bool {
@@ -66,18 +85,34 @@ public struct ArticleSearchService {
             .lowercased()
     }
 
-    private func sortArticles(_ lhs: Article, _ rhs: Article) -> Bool {
+    private func sortArticles(_ lhs: Article, _ rhs: Article, sort: ArticleFeedSort) -> Bool {
+        switch sort {
+        case .hot:
+            return sortHot(lhs, rhs)
+        case .newest:
+            return sortNewest(lhs, rhs)
+        }
+    }
+
+    private func sortHot(_ lhs: Article, _ rhs: Article) -> Bool {
         if lhs.score != rhs.score {
             return lhs.score > rhs.score
         }
 
+        return sortNewest(lhs, rhs)
+    }
+
+    private func sortNewest(_ lhs: Article, _ rhs: Article) -> Bool {
         let lhsPublished = lhs.publishedAt ?? .distantPast
         let rhsPublished = rhs.publishedAt ?? .distantPast
         if lhsPublished != rhsPublished {
             return lhsPublished > rhsPublished
         }
 
-        return lhs.fetchedAt > rhs.fetchedAt
+        if lhs.fetchedAt != rhs.fetchedAt {
+            return lhs.fetchedAt > rhs.fetchedAt
+        }
+
+        return lhs.score > rhs.score
     }
 }
-

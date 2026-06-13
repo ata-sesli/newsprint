@@ -47,6 +47,32 @@ import Testing
     #expect(results.map(\.id) == ["older", "newer"])
 }
 
+@Test func newestSortOrdersByPublishedThenFetchedBeforeScore() {
+    let highScoreOld = makeSearchArticle(
+        id: "high-score-old",
+        title: "High Score Old",
+        publishedAt: Date(timeIntervalSince1970: 100),
+        fetchedAt: Date(timeIntervalSince1970: 100),
+        score: 99
+    )
+    let lowScoreNew = makeSearchArticle(
+        id: "low-score-new",
+        title: "Low Score New",
+        publishedAt: Date(timeIntervalSince1970: 300),
+        fetchedAt: Date(timeIntervalSince1970: 300),
+        score: 1
+    )
+
+    let results = ArticleSearchService().filter(
+        articles: [highScoreOld, lowScoreNew],
+        filter: .inbox,
+        searchText: "",
+        sort: .newest
+    )
+
+    #expect(results.map(\.id) == ["low-score-new", "high-score-old"])
+}
+
 @Test func todayFilterUsesProvidedClock() {
     let now = Date(timeIntervalSince1970: 1_725_000_000)
     let today = makeSearchArticle(id: "today", title: "Today", fetchedAt: now)

@@ -12,6 +12,11 @@ final class SourcesViewModel: ObservableObject {
     @Published var sourceMessage: String?
     @Published var discoveredFeeds: [DiscoveredFeed] = []
     @Published var isDiscovering = false
+    @Published var hackerNewsKind: HackerNewsFeedKind = .frontPage
+    @Published var hackerNewsMinimumPoints = ""
+    @Published var hackerNewsMinimumComments = ""
+    @Published var hackerNewsSearchQuery = ""
+    @Published var hackerNewsCount = ""
     @Published var youtubeChannel = ""
     @Published var importPreview: OPMLImportPreview?
     @Published var importMessage: String?
@@ -69,6 +74,27 @@ final class SourcesViewModel: ObservableObject {
             category: preset.category
         )
         saveNewSource(source, context: context, onSourcesChanged: onSourcesChanged)
+    }
+
+    func addHackerNewsFeed(context: ModelContext, onSourcesChanged: () -> Void) {
+        guard let configuration = hackerNewsConfiguration(reportErrors: true) else {
+            return
+        }
+
+        let source = Source(
+            title: HackerNewsFeedURLBuilder.title(for: configuration),
+            url: HackerNewsFeedURLBuilder.url(for: configuration),
+            kind: .hackerNews,
+            category: "Hacker News"
+        )
+        saveNewSource(source, context: context, onSourcesChanged: onSourcesChanged)
+    }
+
+    var hackerNewsPreviewURL: URL? {
+        guard let configuration = hackerNewsConfiguration(reportErrors: false) else {
+            return nil
+        }
+        return HackerNewsFeedURLBuilder.url(for: configuration)
     }
 
     func addYouTubeFeed(context: ModelContext, onSourcesChanged: () -> Void) {
@@ -209,6 +235,39 @@ final class SourcesViewModel: ObservableObject {
 
     private func saveSource(_ source: Source, context: ModelContext) throws -> Bool {
         try SwiftDataSourceRepository(context: context).saveIfNew(source)
+    }
+
+    private func hackerNewsConfiguration(reportErrors: Bool) -> HackerNewsFeedConfiguration? {
+        guard let minimumPoints = optionalPositiveInt(hackerNewsMinimumPoints, fieldName: "Minimum points", reportErrors: reportErrors),
+              let minimumComments = optionalPositiveInt(hackerNewsMinimumComments, fieldName: "Minimum comments", reportErrors: reportErrors),
+              let count = optionalPositiveInt(hackerNewsCount, fieldName: "Item count", reportErrors: reportErrors) else {
+            return nil
+        }
+
+        return HackerNewsFeedConfiguration(
+            kind: hackerNewsKind,
+            minimumPoints: minimumPoints,
+            minimumComments: minimumComments,
+            searchQuery: hackerNewsSearchQuery,
+            count: count
+        )
+    }
+
+    private func optionalPositiveInt(_ value: String, fieldName: String, reportErrors: Bool) -> Int?? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return .some(nil)
+        }
+        guard let number = Int(trimmed), number > 0 else {
+            if reportErrors {
+                errorMessage = "\(fieldName) must be a positive number."
+            }
+            return nil
+        }
+        if reportErrors {
+            errorMessage = nil
+        }
+        return .some(number)
     }
 }
 

@@ -4,13 +4,17 @@ import newsprintCore
 
 struct ArticleFeedCollectionView: NSViewRepresentable {
     let items: [ArticleFeedItemModel]
+    let reloadGeneration: Int
     let onToggleExpanded: (Article) -> Void
+    let onNearEnd: (Int) -> Void
     let onArticleAction: (Article, ArticleStateMutation) -> Void
 
     func makeCoordinator() -> ArticleFeedCollectionCoordinator {
         ArticleFeedCollectionCoordinator(
             items: items,
+            reloadGeneration: reloadGeneration,
             onToggleExpanded: onToggleExpanded,
+            onNearEnd: onNearEnd,
             onArticleAction: onArticleAction
         )
     }
@@ -59,7 +63,9 @@ struct ArticleFeedCollectionView: NSViewRepresentable {
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
         context.coordinator.update(
             items: items,
+            reloadGeneration: reloadGeneration,
             onToggleExpanded: onToggleExpanded,
+            onNearEnd: onNearEnd,
             onArticleAction: onArticleAction
         )
     }
@@ -74,24 +80,32 @@ final class ArticleFeedCollectionCoordinator: NSObject, NSCollectionViewDataSour
     weak var collectionView: NSCollectionView?
     weak var layout: NSCollectionViewFlowLayout?
     private var items: [ArticleFeedItemModel]
+    private var reloadGeneration: Int
     private let heightCache = ArticleFeedHeightCache()
     private var lastLayoutWidth: CGFloat = 0
     private var onToggleExpanded: (Article) -> Void
+    private var onNearEnd: (Int) -> Void
     private var onArticleAction: (Article, ArticleStateMutation) -> Void
 
     init(
         items: [ArticleFeedItemModel],
+        reloadGeneration: Int,
         onToggleExpanded: @escaping (Article) -> Void,
+        onNearEnd: @escaping (Int) -> Void,
         onArticleAction: @escaping (Article, ArticleStateMutation) -> Void
     ) {
         self.items = items
+        self.reloadGeneration = reloadGeneration
         self.onToggleExpanded = onToggleExpanded
+        self.onNearEnd = onNearEnd
         self.onArticleAction = onArticleAction
     }
 
     func update(
         items newItems: [ArticleFeedItemModel],
+        reloadGeneration newReloadGeneration: Int,
         onToggleExpanded: @escaping (Article) -> Void,
+        onNearEnd: @escaping (Int) -> Void,
         onArticleAction: @escaping (Article, ArticleStateMutation) -> Void
     ) {
         updateLayoutSpacing(for: newItems)
@@ -99,19 +113,22 @@ final class ArticleFeedCollectionCoordinator: NSObject, NSCollectionViewDataSour
         let oldIDs = items.map(\.id)
         let oldExpandedID = items.first(where: \.isExpanded)?.id
         let oldAppearanceKey = items.first.map(appearanceKey)
+        let oldReloadGeneration = reloadGeneration
         let newIDs = newItems.map(\.id)
         let newExpandedID = newItems.first(where: \.isExpanded)?.id
         let newAppearanceKey = newItems.first.map(appearanceKey)
 
         items = newItems
+        reloadGeneration = newReloadGeneration
         self.onToggleExpanded = onToggleExpanded
+        self.onNearEnd = onNearEnd
         self.onArticleAction = onArticleAction
 
         guard let collectionView else {
             return
         }
 
-        if oldIDs != newIDs || oldAppearanceKey != newAppearanceKey {
+        if oldReloadGeneration != newReloadGeneration || oldIDs != newIDs || oldAppearanceKey != newAppearanceKey {
             heightCache.removeAll()
             collectionView.reloadData()
             collectionView.collectionViewLayout?.invalidateLayout()
@@ -147,7 +164,10 @@ final class ArticleFeedCollectionCoordinator: NSObject, NSCollectionViewDataSour
             return item
         }
 
-        let model = items[indexPath.item]
+        let index = indexPath.item
+        notifyNearEndIfNeeded(index: index)
+
+        let model = items[index]
         articleItem.configure(
             model: model,
             onToggleExpanded: { [weak self] article in
@@ -158,6 +178,13 @@ final class ArticleFeedCollectionCoordinator: NSObject, NSCollectionViewDataSour
             }
         )
         return articleItem
+    }
+
+    private func notifyNearEndIfNeeded(index: Int) {
+        guard index >= max(0, items.count - ArticleFeedStore.loadMoreThreshold) else {
+            return
+        }
+        onNearEnd(index)
     }
 
     func collectionView(

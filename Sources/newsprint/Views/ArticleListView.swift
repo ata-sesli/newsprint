@@ -8,22 +8,26 @@ struct ArticleFeedView: View {
     @Environment(\.readerFontSize) private var readerFontSize
     @Environment(\.articleListDensity) private var density
     let articles: [Article]
-    let allArticles: [Article]
+    let counts: FeedCounts
     let sources: [Source]
     @Binding var selection: SidebarSelection
     @Binding var searchText: String
+    @Binding var feedSort: ArticleFeedSort
     var searchFocused: FocusState<Bool>.Binding
     @Binding var expandedArticleID: String?
     @Binding var focusedArticleID: String?
+    let reloadGeneration: Int
+    let onNearEnd: (Int) -> Void
     let onArticleAction: (Article, ArticleStateMutation) -> Void
 
     var body: some View {
         VStack(spacing: 0) {
             FeedControlHeader(
-                articles: allArticles,
+                counts: counts,
                 sources: sources,
                 selection: $selection,
                 searchText: $searchText,
+                feedSort: $feedSort,
                 searchFocused: searchFocused
             )
             .padding(.horizontal, 24)
@@ -35,10 +39,12 @@ struct ArticleFeedView: View {
 
             ArticleFeedCollectionView(
                 items: itemModels,
+                reloadGeneration: reloadGeneration,
                 onToggleExpanded: { article in
                     focusedArticleID = article.id
                     expandedArticleID = expandedArticleID == article.id ? nil : article.id
                 },
+                onNearEnd: onNearEnd,
                 onArticleAction: onArticleAction
             )
             .overlay {
@@ -275,25 +281,25 @@ struct ExpandedArticleContent: View {
 struct FeedControlHeader: View {
     @Environment(\.newsprintTheme) private var theme
     @Environment(\.articleListDensity) private var density
-    let articles: [Article]
+    let counts: FeedCounts
     let sources: [Source]
     @Binding var selection: SidebarSelection
     @Binding var searchText: String
+    @Binding var feedSort: ArticleFeedSort
     var searchFocused: FocusState<Bool>.Binding
-
-    private var summary: TodaySummary {
-        TodaySummaryBuilder().summary(articles: articles, sources: sources, frontPageLimit: 0)
-    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: density.summarySpacing) {
             HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Today")
-                        .font(.title2.weight(.semibold))
-                    Text("Search and filter the feed without leaving the reading surface.")
-                        .font(.callout)
-                        .foregroundStyle(theme.metadata)
+                TimelineView(.periodic(from: .now, by: 30)) { timeline in
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(timeline.date.formatted(.dateTime.hour().minute()))
+                            .font(.system(size: 30, weight: .semibold, design: .rounded))
+                            .monospacedDigit()
+                        Text(timeline.date.formatted(.dateTime.month(.wide).day().year()))
+                            .font(.callout.weight(.medium))
+                            .foregroundStyle(theme.metadata)
+                    }
                 }
 
                 Spacer()
@@ -302,32 +308,30 @@ struct FeedControlHeader: View {
                     Button("Refresh All", systemImage: "arrow.clockwise") {
                         NotificationCenter.default.post(name: .newsprintRefreshAll, object: nil)
                     }
-                    Button("Add Source", systemImage: "plus") {
-                        NotificationCenter.default.post(name: .newsprintAddSource, object: nil)
-                    }
-                    Button("Search", systemImage: "magnifyingglass") {
-                        searchFocused.wrappedValue = true
-                    }
+                    .buttonStyle(HeaderActionButtonStyle())
                 }
-                .buttonStyle(.bordered)
             }
 
             HStack(spacing: 10) {
-                SummaryPill(title: "Today", value: summary.todayCount, systemImage: "calendar")
-                SummaryPill(title: "Unread", value: summary.unreadCount, systemImage: "circle")
-                SummaryPill(title: "Starred", value: summary.starredCount, systemImage: "star")
-                SummaryPill(title: "Hidden", value: summary.hiddenCount, systemImage: "eye.slash")
+                SummaryPill(title: "Today", value: counts.today, systemImage: "calendar")
+                SummaryPill(title: "Unread", value: counts.unread, systemImage: "circle")
+                SummaryPill(title: "Starred", value: counts.starred, systemImage: "star")
+                SummaryPill(title: "Hidden", value: counts.hidden, systemImage: "eye.slash")
             }
 
             ViewThatFits(in: .horizontal) {
                 HStack(alignment: .center, spacing: 12) {
                     searchField
+                    sortChips
                     filterChips
                 }
 
                 VStack(alignment: .leading, spacing: 10) {
                     searchField
-                    filterChips
+                    HStack(spacing: 8) {
+                        sortChips
+                        filterChips
+                    }
                 }
             }
         }
@@ -393,6 +397,19 @@ struct FeedControlHeader: View {
                 .padding(.horizontal, 10)
                 .padding(.vertical, 7)
                 .background(theme.tint.opacity(0.14), in: RoundedRectangle(cornerRadius: 8))
+            }
+        }
+    }
+
+    private var sortChips: some View {
+        HStack(spacing: 8) {
+            ForEach(ArticleFeedSort.allCases) { sort in
+                Button {
+                    feedSort = sort
+                } label: {
+                    Label(sort.displayName, systemImage: sort == .hot ? "flame" : "clock")
+                }
+                .buttonStyle(FilterChipButtonStyle(isSelected: feedSort == sort))
             }
         }
     }
@@ -496,6 +513,28 @@ private struct FilterChipButtonStyle: ButtonStyle {
 
     private var borderColor: Color {
         isSelected ? theme.tint.opacity(0.7) : Color(nsColor: .separatorColor).opacity(0.25)
+    }
+}
+
+private struct HeaderActionButtonStyle: ButtonStyle {
+    @Environment(\.newsprintTheme) private var theme
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(theme.tint)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(background(configuration: configuration), in: RoundedRectangle(cornerRadius: 8))
+            .overlay {
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(theme.tint.opacity(configuration.isPressed ? 0.50 : 0.32), lineWidth: 1)
+            }
+            .opacity(configuration.isPressed ? 0.84 : 1)
+    }
+
+    private func background(configuration: Configuration) -> Color {
+        configuration.isPressed ? theme.tint.opacity(0.18) : theme.tint.opacity(0.10)
     }
 }
 

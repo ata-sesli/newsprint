@@ -11,10 +11,6 @@ struct SourcesView: View {
     let sourceChanged: () -> Void
     @StateObject private var viewModel = SourcesViewModel()
 
-    private var presetColumns: [GridItem] {
-        [GridItem(.adaptive(minimum: 250, maximum: 360), spacing: 12)]
-    }
-
     var body: some View {
         AdminPageShell("Sources") {
             HStack(alignment: .top) {
@@ -40,14 +36,16 @@ struct SourcesView: View {
             ViewThatFits(in: .horizontal) {
                 HStack(alignment: .top, spacing: 14) {
                     addSourceSurface
-                    youtubeSurface
+                    hackerNewsSurface
                 }
 
                 VStack(alignment: .leading, spacing: 14) {
                     addSourceSurface
-                    youtubeSurface
+                    hackerNewsSurface
                 }
             }
+
+            youtubeSurface
 
             if !viewModel.discoveredFeeds.isEmpty {
                 discoveredFeedsSection
@@ -61,6 +59,50 @@ struct SourcesView: View {
                 Text(importMessage)
                     .font(.callout)
                     .foregroundStyle(theme.metadata)
+            }
+
+            VStack(alignment: .leading, spacing: 14) {
+                AdminSectionHeader("Presets", caption: "Lightweight starting points for common feeds.")
+                AdminSurface {
+                    VStack(alignment: .leading, spacing: 0) {
+                        HStack(spacing: 14) {
+                            Text("Feed")
+                                .frame(width: 28, alignment: .leading)
+                            Text("Name")
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            Text("Tags")
+                                .frame(width: 360, alignment: .leading)
+                            Text("Added")
+                                .frame(width: 72, alignment: .trailing)
+                        }
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(theme.metadata)
+                        .padding(.horizontal, 12)
+                        .padding(.bottom, 2)
+
+                        LazyVStack(spacing: 0) {
+                            ForEach(PresetSourceCatalog.all) { preset in
+                                PresetListRow(
+                                    preset: preset,
+                                    isAdded: isPresetAdded(preset)
+                                ) {
+                                    viewModel.addPreset(preset, context: modelContext, onSourcesChanged: sourceChanged)
+                                }
+
+                                if preset.id != PresetSourceCatalog.all.last?.id {
+                                    Divider()
+                                        .opacity(0.5)
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if let sourceMessage = viewModel.sourceMessage {
+                    Text(sourceMessage)
+                        .font(.callout)
+                        .foregroundStyle(theme.metadata)
+                }
             }
 
             if !sources.isEmpty {
@@ -86,26 +128,6 @@ struct SourcesView: View {
                             )
                         }
                     }
-                }
-            }
-
-            VStack(alignment: .leading, spacing: 14) {
-                AdminSectionHeader("Presets", caption: "Lightweight starting points for common feeds.")
-                LazyVGrid(columns: presetColumns, alignment: .leading, spacing: 12) {
-                    ForEach(PresetSourceCatalog.all) { preset in
-                        PresetGridCard(
-                            preset: preset,
-                            isAdded: isPresetAdded(preset)
-                        ) {
-                            viewModel.addPreset(preset, context: modelContext, onSourcesChanged: sourceChanged)
-                        }
-                    }
-                }
-
-                if let sourceMessage = viewModel.sourceMessage {
-                    Text(sourceMessage)
-                        .font(.callout)
-                        .foregroundStyle(theme.metadata)
                 }
             }
         }
@@ -155,6 +177,58 @@ struct SourcesView: View {
             }
         }
         .frame(maxWidth: .infinity)
+    }
+
+    private var hackerNewsSurface: some View {
+        AdminSurface {
+            VStack(alignment: .leading, spacing: 14) {
+                AdminSectionHeader("Hacker News", caption: "Build a tuned HNRSS feed.")
+
+                Picker("Feed", selection: $viewModel.hackerNewsKind) {
+                    ForEach(HackerNewsFeedKind.allCases) { kind in
+                        Text(kind.displayName).tag(kind)
+                    }
+                }
+                .pickerStyle(.menu)
+
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 10) {
+                        hackerNewsNumberField("Min points", text: $viewModel.hackerNewsMinimumPoints)
+                        hackerNewsNumberField("Min comments", text: $viewModel.hackerNewsMinimumComments)
+                        hackerNewsNumberField("Count", text: $viewModel.hackerNewsCount)
+                    }
+
+                    VStack(alignment: .leading, spacing: 10) {
+                        hackerNewsNumberField("Min points", text: $viewModel.hackerNewsMinimumPoints)
+                        hackerNewsNumberField("Min comments", text: $viewModel.hackerNewsMinimumComments)
+                        hackerNewsNumberField("Count", text: $viewModel.hackerNewsCount)
+                    }
+                }
+
+                TextField("Search query", text: $viewModel.hackerNewsSearchQuery)
+                    .textFieldStyle(.roundedBorder)
+
+                if let previewURL = viewModel.hackerNewsPreviewURL {
+                    Text(previewURL.absoluteString)
+                        .font(.caption.monospaced())
+                        .foregroundStyle(theme.metadata)
+                        .lineLimit(2)
+                        .textSelection(.enabled)
+                }
+
+                Button("Add Hacker News Feed", systemImage: "plus.circle") {
+                    viewModel.addHackerNewsFeed(context: modelContext, onSourcesChanged: sourceChanged)
+                }
+                .buttonStyle(.borderedProminent)
+            }
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private func hackerNewsNumberField(_ prompt: String, text: Binding<String>) -> some View {
+        TextField(prompt, text: text)
+            .textFieldStyle(.roundedBorder)
+            .frame(minWidth: 92)
     }
 
     private var youtubeSurface: some View {
@@ -257,47 +331,49 @@ private extension DiscoveredFeedType {
     }
 }
 
-struct PresetGridCard: View {
+struct PresetListRow: View {
     @Environment(\.newsprintTheme) private var theme
     let preset: PresetSource
     let isAdded: Bool
     let add: () -> Void
 
     var body: some View {
-        AdminSurface {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(alignment: .top, spacing: 10) {
-                    Image(systemName: iconName)
-                        .font(.title3.weight(.semibold))
-                        .foregroundStyle(theme.tint)
-                        .frame(width: 24)
-
-                    VStack(alignment: .leading, spacing: 7) {
-                        Text(preset.title)
-                            .font(.headline)
-                            .lineLimit(2)
-                        HStack {
-                            PillTag(title: preset.category)
-                            PillTag(title: preset.kind.displayName)
-                        }
-                    }
-
-                    Spacer()
-                }
-
-                if isAdded {
-                    Button("Added", systemImage: "checkmark.circle") {}
-                        .disabled(true)
-                        .buttonStyle(.bordered)
-                } else {
-                    Button("Add", systemImage: "plus.circle") {
-                        add()
-                    }
-                    .buttonStyle(.borderedProminent)
-                }
+        Button {
+            if !isAdded {
+                add()
             }
+        } label: {
+            HStack(spacing: 14) {
+                Image(systemName: iconName)
+                    .font(.title3.weight(.semibold))
+                    .foregroundStyle(theme.tint)
+                    .frame(width: 28, alignment: .leading)
+
+                Text(preset.title)
+                    .font(.headline)
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                HStack(spacing: 6) {
+                    ForEach(displayTags, id: \.self) { tag in
+                        PillTag(title: tag)
+                    }
+                }
+                .frame(width: 360, alignment: .leading)
+
+                Image(systemName: isAdded ? "checkmark.circle.fill" : "plus.circle")
+                    .font(.title3.weight(.semibold))
+                    .foregroundStyle(isAdded ? theme.tint : theme.metadata)
+                    .frame(width: 72, alignment: .trailing)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 11)
+            .contentShape(Rectangle())
+            .background(rowBackground, in: RoundedRectangle(cornerRadius: 7))
         }
-        .opacity(isAdded ? 0.62 : 1)
+        .buttonStyle(.plain)
+        .disabled(isAdded)
     }
 
     private var iconName: String {
@@ -309,6 +385,21 @@ struct PresetGridCard: View {
         case .rss, .atom, .jsonFeed, .blog:
             "dot.radiowaves.left.and.right"
         }
+    }
+
+    private var displayTags: [String] {
+        var tags: [String] = []
+        for tag in [preset.category, preset.kind.displayName] {
+            guard !tags.contains(tag) else {
+                continue
+            }
+            tags.append(tag)
+        }
+        return tags
+    }
+
+    private var rowBackground: Color {
+        isAdded ? theme.tint.opacity(0.10) : Color.clear
     }
 }
 

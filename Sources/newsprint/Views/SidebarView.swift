@@ -5,7 +5,7 @@ struct SidebarView: View {
     @Environment(\.newsprintTheme) private var theme
     @Binding var selection: SidebarSelection
     let sources: [Source]
-    let articles: [Article]
+    let tagNames: [String]
 
     var body: some View {
         ScrollView {
@@ -62,10 +62,6 @@ struct SidebarView: View {
         .scrollContentBackground(.hidden)
         .background(theme.paneBackground)
         .navigationTitle("Newsprint")
-    }
-
-    private var tagNames: [String] {
-        Array(Set(articles.flatMap(\.tagNames))).sorted()
     }
 }
 

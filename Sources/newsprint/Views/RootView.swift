@@ -5,19 +5,20 @@ import newsprintCore
 
 struct RootView: View {
     @Environment(\.modelContext) private var modelContext
-    @Query(sort: \Article.fetchedAt, order: .reverse) private var articles: [Article]
     @Query private var settingsItems: [AppSettings]
     @StateObject private var viewModel = RootViewModel()
+    @StateObject private var feedStore = ArticleFeedStore()
     @State private var selection: SidebarSelection = .inbox
     @State private var expandedArticleID: String?
     @State private var focusedArticleID: String?
     @State private var searchText = ""
+    @State private var feedSort: ArticleFeedSort = .hot
     @FocusState private var searchFocused: Bool
 
     var body: some View {
         PersistentTwoPaneSplitView {
             NavigationStack {
-                SidebarView(selection: $selection, sources: viewModel.sources, articles: articles)
+                SidebarView(selection: $selection, sources: viewModel.sources, tagNames: feedStore.tagNames)
             }
             .background(theme.paneBackground)
         } content: {
@@ -27,7 +28,13 @@ struct RootView: View {
             .background(theme.paneBackground)
         }
         .task {
-            viewModel.bootstrap(context: modelContext, settings: settingsItems.first)
+            viewModel.bootstrap(
+                context: modelContext,
+                settings: settingsItems.first,
+                onDataChanged: { reloadFeedAfterBulkChange() }
+            )
+            reloadFeed()
+            feedStore.refreshTagNames(context: modelContext)
         }
         .environment(\.newsprintTheme, theme)
         .environment(\.readerFontChoice, readerFontChoice)
@@ -53,11 +60,31 @@ struct RootView: View {
         .onChange(of: settingsItems.first?.refreshWhileOpenMinutes) {
             viewModel.startRefreshLoop(
                 context: modelContext,
-                minutes: settingsItems.first?.refreshWhileOpenMinutes
+                minutes: settingsItems.first?.refreshWhileOpenMinutes,
+                onDataChanged: { reloadFeedAfterBulkChange() }
             )
         }
+        .onChange(of: selection) {
+            expandedArticleID = nil
+            focusedArticleID = nil
+            if selection.isArticleFeedSelection {
+                reloadFeed()
+            }
+        }
+        .onChange(of: searchText) {
+            expandedArticleID = nil
+            if selection.isArticleFeedSelection {
+                reloadFeed()
+            }
+        }
+        .onChange(of: feedSort) {
+            expandedArticleID = nil
+            if selection.isArticleFeedSelection {
+                reloadFeed()
+            }
+        }
         .onReceive(NotificationCenter.default.publisher(for: .newsprintRefreshAll)) { _ in
-            viewModel.refreshAll(context: modelContext)
+            refreshAll()
         }
         .onReceive(NotificationCenter.default.publisher(for: .newsprintAddSource)) { _ in
             selection = .sources
@@ -87,8 +114,13 @@ struct RootView: View {
         case .sources:
             SourcesView(
                 sources: viewModel.sources,
-                refresh: { source in viewModel.refresh(source, context: modelContext) },
-                sourceChanged: { viewModel.reloadSources(context: modelContext) }
+                refresh: { source in
+                    viewModel.refresh(source, context: modelContext, onDataChanged: { reloadFeedAfterBulkChange() })
+                },
+                sourceChanged: {
+                    viewModel.reloadSources(context: modelContext)
+                    reloadFeedAfterBulkChange()
+                }
             )
         case .rules:
             RulesView()
@@ -96,14 +128,19 @@ struct RootView: View {
             SettingsView()
         default:
             ArticleFeedView(
-                articles: filteredArticles,
-                allArticles: articles,
+                articles: feedStore.articles,
+                counts: feedStore.counts,
                 sources: viewModel.sources,
                 selection: $selection,
                 searchText: $searchText,
+                feedSort: $feedSort,
                 searchFocused: $searchFocused,
                 expandedArticleID: $expandedArticleID,
                 focusedArticleID: $focusedArticleID,
+                reloadGeneration: feedStore.bulkReloadGeneration,
+                onNearEnd: { index in
+                    feedStore.loadMoreIfNeeded(currentIndex: index, context: modelContext)
+                },
                 onArticleAction: saveArticle
             )
         }
@@ -125,8 +162,8 @@ struct RootView: View {
         settingsItems.first?.articleListDensity ?? .comfortable
     }
 
-    private var filteredArticles: [Article] {
-        let filter: ArticleFilter = switch selection {
+    private var activeFilter: ArticleFilter {
+        switch selection {
         case .inbox:
             .inbox
         case .unread:
@@ -144,23 +181,22 @@ struct RootView: View {
         case .sources, .rules, .settings:
             .inbox
         }
-        return ArticleSearchService().filter(articles: articles, filter: filter, searchText: searchText)
     }
 
     private var actionArticle: Article? {
         let id = expandedArticleID ?? focusedArticleID
         guard let id else { return nil }
-        return articles.first { $0.id == id }
+        return feedStore.articles.first { $0.id == id }
     }
 
     private func markExpandedReadOnOpenIfNeeded() {
         guard settingsItems.first?.markReadOnOpen == true,
               let expandedArticleID,
-              let article = articles.first(where: { $0.id == expandedArticleID }),
+              let article = feedStore.articles.first(where: { $0.id == expandedArticleID }),
               !article.isRead else {
             return
         }
-        viewModel.saveArticleState(article, mutation: .markRead, context: modelContext)
+        saveArticle(article, .markRead)
     }
 
     private func saveSelected(_ mutation: ArticleStateMutation) {
@@ -169,7 +205,28 @@ struct RootView: View {
     }
 
     private func saveArticle(_ article: Article, _ mutation: ArticleStateMutation) {
-        viewModel.saveArticleState(article, mutation: mutation, context: modelContext)
+        let previousState = ArticleStateSnapshot(article: article)
+        guard viewModel.saveArticleState(article, mutation: mutation, context: modelContext) else {
+            return
+        }
+        feedStore.refreshAfterArticleMutation(
+            context: modelContext,
+            article: article,
+            previousState: previousState,
+            mutation: mutation
+        )
+    }
+
+    private func reloadFeed() {
+        feedStore.reloadIfNeeded(context: modelContext, filter: activeFilter, searchText: searchText, sort: feedSort)
+    }
+
+    private func refreshAll() {
+        viewModel.refreshAll(context: modelContext, onDataChanged: { reloadFeedAfterBulkChange() })
+    }
+
+    private func reloadFeedAfterBulkChange() {
+        feedStore.reloadAfterBulkDataChange(context: modelContext)
     }
 }
 
@@ -184,4 +241,15 @@ enum SidebarSelection: Hashable {
     case settings
     case source(UUID)
     case tag(String)
+}
+
+private extension SidebarSelection {
+    var isArticleFeedSelection: Bool {
+        switch self {
+        case .inbox, .unread, .today, .starred, .hidden, .source, .tag:
+            true
+        case .sources, .rules, .settings:
+            false
+        }
+    }
 }
