@@ -43,6 +43,11 @@ struct NewsprintApp: App {
             }
 
             CommandGroup(after: .toolbar) {
+                Button("Toggle Preview Pane") {
+                    NotificationCenter.default.post(name: .newsprintTogglePreviewPane, object: nil)
+                }
+                .keyboardShortcut("p", modifiers: [.command, .option])
+
                 Button("Mark Read/Unread") {
                     NotificationCenter.default.post(name: .newsprintToggleRead, object: nil)
                 }
@@ -145,4 +150,5 @@ extension Notification.Name {
     static let newsprintToggleStar = Notification.Name("newsprintToggleStar")
     static let newsprintToggleHidden = Notification.Name("newsprintToggleHidden")
     static let newsprintOpenOriginal = Notification.Name("newsprintOpenOriginal")
+    static let newsprintTogglePreviewPane = Notification.Name("newsprintTogglePreviewPane")
 }

@@ -16,11 +16,28 @@ struct ArticleFeedView: View {
     var searchFocused: FocusState<Bool>.Binding
     @Binding var expandedArticleID: String?
     @Binding var focusedArticleID: String?
+    let previewArticle: Article?
+    @Binding var previewArticleID: String?
+    @Binding var previewMode: PreviewMode
+    @Binding var isPreviewCollapsed: Bool
     let reloadGeneration: Int
     let onNearEnd: (Int) -> Void
     let onArticleAction: (Article, ArticleStateMutation) -> Void
 
     var body: some View {
+        ArticleReadingSplitView(isPreviewCollapsed: $isPreviewCollapsed) {
+            feedContent
+        } preview: {
+            ArticlePreviewPane(
+                article: previewArticle,
+                previewMode: $previewMode,
+                isCollapsed: $isPreviewCollapsed
+            )
+        }
+        .navigationTitle("Feed")
+    }
+
+    private var feedContent: some View {
         VStack(spacing: 0) {
             FeedControlHeader(
                 counts: counts,
@@ -28,6 +45,7 @@ struct ArticleFeedView: View {
                 selection: $selection,
                 searchText: $searchText,
                 feedSort: $feedSort,
+                isPreviewCollapsed: $isPreviewCollapsed,
                 searchFocused: searchFocused
             )
             .padding(.horizontal, 24)
@@ -42,6 +60,8 @@ struct ArticleFeedView: View {
                 reloadGeneration: reloadGeneration,
                 onToggleExpanded: { article in
                     focusedArticleID = article.id
+                    previewArticleID = article.id
+                    isPreviewCollapsed = false
                     expandedArticleID = expandedArticleID == article.id ? nil : article.id
                 },
                 onNearEnd: onNearEnd,
@@ -55,7 +75,6 @@ struct ArticleFeedView: View {
             .background(theme.paneBackground)
         }
         .background(theme.paneBackground)
-        .navigationTitle("Feed")
     }
 
     private var itemModels: [ArticleFeedItemModel] {
@@ -286,6 +305,7 @@ struct FeedControlHeader: View {
     @Binding var selection: SidebarSelection
     @Binding var searchText: String
     @Binding var feedSort: ArticleFeedSort
+    @Binding var isPreviewCollapsed: Bool
     var searchFocused: FocusState<Bool>.Binding
 
     var body: some View {
@@ -307,6 +327,11 @@ struct FeedControlHeader: View {
                 HStack {
                     Button("Refresh All", systemImage: "arrow.clockwise") {
                         NotificationCenter.default.post(name: .newsprintRefreshAll, object: nil)
+                    }
+                    .buttonStyle(HeaderActionButtonStyle())
+
+                    Button(isPreviewCollapsed ? "Show Preview" : "Hide Preview", systemImage: "sidebar.right") {
+                        isPreviewCollapsed.toggle()
                     }
                     .buttonStyle(HeaderActionButtonStyle())
                 }

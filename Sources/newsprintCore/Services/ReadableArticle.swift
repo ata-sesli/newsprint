@@ -1,0 +1,230 @@
+import Foundation
+
+public struct ReadableArticle: Equatable, Sendable {
+    public let title: String
+    public let byline: String?
+    public let siteName: String?
+    public let url: URL
+    public let html: String
+    public let text: String
+
+    public init(title: String, byline: String?, siteName: String?, url: URL, html: String, text: String) {
+        self.title = title
+        self.byline = byline
+        self.siteName = siteName
+        self.url = url
+        self.html = html
+        self.text = text
+    }
+}
+
+public enum ReadableArticleExtractionError: LocalizedError, Equatable {
+    case emptyDocument
+    case noReadableContent
+
+    public var errorDescription: String? {
+        switch self {
+        case .emptyDocument:
+            "The page did not contain any HTML."
+        case .noReadableContent:
+            "Newsprint could not find a readable article on this page."
+        }
+    }
+}
+
+public struct ReadableArticleFetcher: Sendable {
+    private let session: URLSession
+
+    public init(session: URLSession = .shared) {
+        self.session = session
+    }
+
+    public func fetch(url: URL) async throws -> String {
+        var request = URLRequest(url: url, timeoutInterval: 20)
+        request.setValue("Newsprint/1.0 (+https://local.newsprint)", forHTTPHeaderField: "User-Agent")
+        let (data, response) = try await session.data(for: request)
+        if let httpResponse = response as? HTTPURLResponse, !(200..<300).contains(httpResponse.statusCode) {
+            throw URLError(.badServerResponse)
+        }
+        return String(data: data, encoding: .utf8) ?? String(decoding: data, as: UTF8.self)
+    }
+}
+
+public struct ReadableArticleExtractor: Sendable {
+    public init() {}
+
+    public func extract(html: String, url: URL) throws -> ReadableArticle {
+        let trimmed = html.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            throw ReadableArticleExtractionError.emptyDocument
+        }
+
+        let cleaned = removeUnwantedBlocks(from: trimmed)
+        guard let selected = bestCandidate(in: cleaned),
+              let text = HTMLTextExtractor.text(fromHTML: Optional(selected)),
+              text.count >= 20 else {
+            throw ReadableArticleExtractionError.noReadableContent
+        }
+
+        let title = firstMatch(#"(?is)<h1\b[^>]*>(.*?)</h1>"#, in: selected)
+            .flatMap { HTMLTextExtractor.text(fromHTML: Optional($0)) }
+            ?? firstMetaContent(named: "og:title", in: cleaned)
+            ?? firstMatch(#"(?is)<title\b[^>]*>(.*?)</title>"#, in: cleaned).flatMap { HTMLTextExtractor.text(fromHTML: Optional($0)) }
+            ?? url.host() ?? url.absoluteString
+
+        let byline = firstMetaContent(named: "author", in: cleaned)
+        let siteName = firstMetaContent(named: "og:site_name", in: cleaned) ?? url.host()
+        let sanitized = sanitize(selected, baseURL: url)
+
+        return ReadableArticle(
+            title: title,
+            byline: byline,
+            siteName: siteName,
+            url: url,
+            html: sanitized,
+            text: HTMLTextExtractor.text(fromHTML: Optional(sanitized)) ?? text
+        )
+    }
+
+    private func removeUnwantedBlocks(from html: String) -> String {
+        var output = html
+        for pattern in [
+            #"(?is)<(script|style|noscript|svg|iframe|form|nav|footer|header|aside)\b[^>]*>.*?</\1>"#,
+            #"(?is)<([a-z0-9]+)\b[^>]*(?:class|id)=["'][^"']*(?:ad-|ads|advert|promo|subscribe|newsletter|cookie|related|sidebar)[^"']*["'][^>]*>.*?</\1>"#
+        ] {
+            output = output.replacingOccurrences(of: pattern, with: " ", options: .regularExpression)
+        }
+        return output
+    }
+
+    private func bestCandidate(in html: String) -> String? {
+        let candidates = [
+            candidates(matching: #"(?is)<article\b[^>]*>(.*?)</article>"#, in: html),
+            candidates(matching: #"(?is)<main\b[^>]*>(.*?)</main>"#, in: html),
+            candidates(matching: #"(?is)<(?:div|section)\b[^>]*(?:class|id)=["'][^"']*(?:article|content|post|entry)[^"']*["'][^>]*>(.*?)</(?:div|section)>"#, in: html)
+        ].flatMap { $0 }
+
+        return candidates.max { lhs, rhs in
+            (HTMLTextExtractor.text(fromHTML: Optional(lhs))?.count ?? 0) < (HTMLTextExtractor.text(fromHTML: Optional(rhs))?.count ?? 0)
+        }
+    }
+
+    private func candidates(matching pattern: String, in html: String) -> [String] {
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
+        let range = NSRange(html.startIndex..<html.endIndex, in: html)
+        return regex.matches(in: html, range: range).compactMap { match in
+            guard match.numberOfRanges > 1,
+                  let bodyRange = Range(match.range(at: 1), in: html) else {
+                return nil
+            }
+            return String(html[bodyRange])
+        }
+    }
+
+    private func sanitize(_ html: String, baseURL: URL) -> String {
+        let allowed: Set<String> = ["p", "h1", "h2", "h3", "h4", "ul", "ol", "li", "blockquote", "pre", "code", "strong", "b", "em", "i", "a", "br"]
+        guard let regex = try? NSRegularExpression(pattern: #"(?is)<\s*(/?)\s*([a-z0-9]+)([^>]*)>"#) else {
+            return html
+        }
+
+        var result = ""
+        var cursor = html.startIndex
+        let range = NSRange(html.startIndex..<html.endIndex, in: html)
+        for match in regex.matches(in: html, range: range) {
+            guard let fullRange = Range(match.range(at: 0), in: html),
+                  let slashRange = Range(match.range(at: 1), in: html),
+                  let tagRange = Range(match.range(at: 2), in: html),
+                  let attrRange = Range(match.range(at: 3), in: html) else {
+                continue
+            }
+
+            result += html[cursor..<fullRange.lowerBound]
+            let tag = html[tagRange].lowercased()
+            let isClosing = !html[slashRange].isEmpty
+            if allowed.contains(String(tag)) {
+                result += replacementTag(tag: String(tag), attributes: String(html[attrRange]), isClosing: isClosing, baseURL: baseURL)
+            }
+            cursor = fullRange.upperBound
+        }
+        result += html[cursor..<html.endIndex]
+        return result
+            .replacingOccurrences(of: #"(?is)<!--.*?-->"#, with: "", options: .regularExpression)
+            .replacingOccurrences(of: #"\s{2,}"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func replacementTag(tag: String, attributes: String, isClosing: Bool, baseURL: URL) -> String {
+        if isClosing {
+            return tag == "br" ? "" : "</\(tag)>"
+        }
+        if tag == "br" {
+            return "<br>"
+        }
+        if tag == "a", let href = firstAttribute("href", in: attributes), let absoluteURL = URL(string: href, relativeTo: baseURL)?.absoluteURL {
+            return "<a href=\"\(escapeAttribute(absoluteURL.absoluteString))\">"
+        }
+        return "<\(tag)>"
+    }
+
+    private func firstAttribute(_ name: String, in text: String) -> String? {
+        firstMatch(#"(?i)\b\#(name)\s*=\s*["']([^"']+)["']"#, in: text, rangeIndex: 1)
+    }
+
+    private func firstMetaContent(named name: String, in html: String) -> String? {
+        firstMatch(#"(?is)<meta\b[^>]*(?:name|property)=["']\#(NSRegularExpression.escapedPattern(for: name))["'][^>]*content=["']([^"']+)["'][^>]*>"#, in: html, rangeIndex: 1)
+            ?? firstMatch(#"(?is)<meta\b[^>]*content=["']([^"']+)["'][^>]*(?:name|property)=["']\#(NSRegularExpression.escapedPattern(for: name))["'][^>]*>"#, in: html, rangeIndex: 1)
+    }
+
+    private func firstMatch(_ pattern: String, in text: String, rangeIndex: Int = 1) -> String? {
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
+        let range = NSRange(text.startIndex..<text.endIndex, in: text)
+        guard let match = regex.firstMatch(in: text, range: range),
+              match.numberOfRanges > rangeIndex,
+              let matchRange = Range(match.range(at: rangeIndex), in: text) else {
+            return nil
+        }
+        return String(text[matchRange]).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func escapeAttribute(_ value: String) -> String {
+        value
+            .replacingOccurrences(of: "&", with: "&amp;")
+            .replacingOccurrences(of: "\"", with: "&quot;")
+            .replacingOccurrences(of: "<", with: "&lt;")
+            .replacingOccurrences(of: ">", with: "&gt;")
+    }
+}
+
+public enum PreviewMode: String, Codable, CaseIterable, Sendable, Identifiable {
+    case reader
+    case web
+
+    public var id: String { rawValue }
+
+    public init(storedRawValue: String) {
+        self = PreviewMode(rawValue: storedRawValue) ?? .reader
+    }
+}
+
+public enum ArticlePreviewTarget {
+    public static func url(for article: Article) -> URL? {
+        HackerNewsMetadata(text: article.contentText ?? article.excerpt)?.articleURL ?? article.url
+    }
+}
+
+public enum WebContentBlockerRules {
+    public static let identifier = "NewsprintCuratedContentBlocker"
+
+    public static let json = """
+    [
+      {
+        "trigger": { "url-filter": ".*", "if-domain": ["doubleclick.net", "googlesyndication.com", "google-analytics.com", "googletagmanager.com", "facebook.net", "scorecardresearch.com"] },
+        "action": { "type": "block" }
+      },
+      {
+        "trigger": { "url-filter": ".*", "resource-type": ["image", "style-sheet"], "url-filter-is-case-sensitive": false, "if-top-url": [".*"] },
+        "action": { "type": "css-display-none", "selector": ".ad, .ads, .advertisement, [class*='ad-'], [id*='ad-'], [class*='sponsor'], [id*='sponsor']" }
+      }
+    ]
+    """
+}

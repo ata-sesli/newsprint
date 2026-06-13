@@ -11,8 +11,11 @@ struct RootView: View {
     @State private var selection: SidebarSelection = .inbox
     @State private var expandedArticleID: String?
     @State private var focusedArticleID: String?
+    @State private var previewArticleID: String?
     @State private var searchText = ""
     @State private var feedSort: ArticleFeedSort = .hot
+    @AppStorage("newsprint.previewMode") private var previewModeRawValue = PreviewMode.reader.rawValue
+    @AppStorage("newsprint.previewPaneCollapsed") private var isPreviewCollapsed = false
     @FocusState private var searchFocused: Bool
 
     var body: some View {
@@ -67,18 +70,21 @@ struct RootView: View {
         .onChange(of: selection) {
             expandedArticleID = nil
             focusedArticleID = nil
+            previewArticleID = nil
             if selection.isArticleFeedSelection {
                 reloadFeed()
             }
         }
         .onChange(of: searchText) {
             expandedArticleID = nil
+            previewArticleID = nil
             if selection.isArticleFeedSelection {
                 reloadFeed()
             }
         }
         .onChange(of: feedSort) {
             expandedArticleID = nil
+            previewArticleID = nil
             if selection.isArticleFeedSelection {
                 reloadFeed()
             }
@@ -104,6 +110,12 @@ struct RootView: View {
         .onReceive(NotificationCenter.default.publisher(for: .newsprintOpenOriginal)) { _ in
             if let url = actionArticle?.url {
                 NSWorkspace.shared.open(url)
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .newsprintTogglePreviewPane)) { _ in
+            isPreviewCollapsed.toggle()
+            if !isPreviewCollapsed, previewArticleID == nil {
+                previewArticleID = actionArticle?.id
             }
         }
     }
@@ -137,6 +149,10 @@ struct RootView: View {
                 searchFocused: $searchFocused,
                 expandedArticleID: $expandedArticleID,
                 focusedArticleID: $focusedArticleID,
+                previewArticle: previewArticle,
+                previewArticleID: $previewArticleID,
+                previewMode: previewModeBinding,
+                isPreviewCollapsed: $isPreviewCollapsed,
                 reloadGeneration: feedStore.bulkReloadGeneration,
                 onNearEnd: { index in
                     feedStore.loadMoreIfNeeded(currentIndex: index, context: modelContext)
@@ -181,6 +197,19 @@ struct RootView: View {
         case .sources, .rules, .settings:
             .inbox
         }
+    }
+
+    private var previewModeBinding: Binding<PreviewMode> {
+        Binding {
+            PreviewMode(storedRawValue: previewModeRawValue)
+        } set: { mode in
+            previewModeRawValue = mode.rawValue
+        }
+    }
+
+    private var previewArticle: Article? {
+        guard let previewArticleID else { return nil }
+        return feedStore.articles.first { $0.id == previewArticleID }
     }
 
     private var actionArticle: Article? {
