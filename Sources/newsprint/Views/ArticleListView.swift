@@ -4,6 +4,8 @@ import newsprintCore
 
 struct ArticleFeedView: View {
     @Environment(\.newsprintTheme) private var theme
+    @Environment(\.readerFontChoice) private var readerFontChoice
+    @Environment(\.readerFontSize) private var readerFontSize
     @Environment(\.articleListDensity) private var density
     let articles: [Article]
     let allArticles: [Article]
@@ -31,24 +33,14 @@ struct ArticleFeedView: View {
 
             Divider()
 
-            ScrollView {
-                LazyVStack(spacing: density.rowVerticalPadding + 10) {
-                    ForEach(articles) { article in
-                        ArticleFeedCard(
-                            article: article,
-                            isExpanded: expandedArticleID == article.id,
-                            onToggleExpanded: {
-                                focusedArticleID = article.id
-                                expandedArticleID = expandedArticleID == article.id ? nil : article.id
-                            },
-                            onArticleAction: onArticleAction
-                        )
-                    }
-                }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 18)
-                .frame(maxWidth: .infinity)
-            }
+            ArticleFeedCollectionView(
+                items: itemModels,
+                onToggleExpanded: { article in
+                    focusedArticleID = article.id
+                    expandedArticleID = expandedArticleID == article.id ? nil : article.id
+                },
+                onArticleAction: onArticleAction
+            )
             .overlay {
                 if articles.isEmpty {
                     ContentUnavailableView("No Articles", systemImage: "newspaper", description: Text("Add a source and refresh to read locally."))
@@ -59,6 +51,21 @@ struct ArticleFeedView: View {
         .background(theme.paneBackground)
         .navigationTitle("Feed")
     }
+
+    private var itemModels: [ArticleFeedItemModel] {
+        articles.map { article in
+            ArticleFeedItemModel(
+                article: article,
+                isExpanded: expandedArticleID == article.id,
+                hackerNewsMetadata: HackerNewsMetadata(text: article.contentText ?? article.excerpt),
+                metadataText: ArticleFeedItemModel.metadataText(for: article),
+                theme: theme,
+                readerFontChoice: readerFontChoice,
+                readerFontSize: readerFontSize,
+                density: density
+            )
+        }
+    }
 }
 
 struct ArticleFeedCard: View {
@@ -68,12 +75,10 @@ struct ArticleFeedCard: View {
     @Environment(\.articleListDensity) private var density
     let article: Article
     let isExpanded: Bool
+    let hackerNewsMetadata: HackerNewsMetadata?
+    let metadataText: String
     let onToggleExpanded: () -> Void
     let onArticleAction: (Article, ArticleStateMutation) -> Void
-
-    private var hackerNewsMetadata: HackerNewsMetadata? {
-        HackerNewsMetadata(text: article.contentText ?? article.excerpt)
-    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: density.rowSpacing) {
@@ -132,7 +137,7 @@ struct ArticleFeedCard: View {
                     HackerNewsBadge()
                 }
 
-                Text(metadata)
+                Text(metadataText)
                     .font(.caption.weight(.medium))
                     .foregroundStyle(theme.metadata)
 
@@ -162,15 +167,6 @@ struct ArticleFeedCard: View {
                 HackerNewsStatLabels(metadata: hackerNewsMetadata)
             }
         }
-    }
-
-    private var metadata: String {
-        var parts = [article.sourceTitle]
-        if let author = article.author, !author.isEmpty {
-            parts.append(author)
-        }
-        parts.append((article.publishedAt ?? article.fetchedAt).formatted(date: .abbreviated, time: .shortened))
-        return parts.joined(separator: " · ")
     }
 
     private var previewText: String? {
