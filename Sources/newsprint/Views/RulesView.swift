@@ -4,6 +4,7 @@ import newsprintCore
 
 struct RulesView: View {
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.newsprintTheme) private var theme
     @Query(sort: \FilterRule.priority) private var rules: [FilterRule]
     @State private var name = ""
     @State private var target: RuleTarget = .title
@@ -15,61 +16,117 @@ struct RulesView: View {
     @State private var errorMessage: String?
 
     var body: some View {
-        VStack(spacing: 0) {
-            Form {
-                Section("Add Rule") {
-                    TextField("Name", text: $name)
-                    Picker("Target", selection: $target) {
-                        ForEach(RuleTarget.allCases) { target in
-                            Text(target.displayName).tag(target)
-                        }
-                    }
-                    Picker("Match", selection: $matchMode) {
-                        ForEach(RuleMatchMode.allCases) { mode in
-                            Text(mode.displayName).tag(mode)
-                        }
-                    }
-                    TextField("Pattern", text: $pattern)
-                    Picker("Action", selection: $action) {
-                        ForEach(RuleAction.allCases) { action in
-                            Text(action.displayName).tag(action)
-                        }
-                    }
-                    if action == .boost || action == .tag {
-                        TextField(action == .boost ? "Score Delta" : "Tag", text: $actionValue)
-                    }
-                    Stepper("Priority \(priority)", value: $priority, in: -100...100)
+        AdminPageShell("Rules") {
+            HStack(alignment: .top) {
+                AdminSectionHeader(
+                    "Rules",
+                    caption: "Filter, tag, hide, and score incoming articles as they are saved."
+                )
 
-                    HStack {
-                        Button("Add Rule", systemImage: "plus") {
-                            addRule()
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || pattern.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                Spacer()
 
-                        Button("Reapply Rules", systemImage: "arrow.triangle.2.circlepath") {
-                            reapplyRules()
-                        }
+                HStack {
+                    Button("Reapply Rules", systemImage: "arrow.triangle.2.circlepath") {
+                        reapplyRules()
+                    }
+                    Button("Add Rule", systemImage: "plus") {
+                        addRule()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(!canAddRule)
+                }
+            }
 
-                        if let errorMessage {
-                            Text(errorMessage)
-                                .foregroundStyle(.red)
-                        }
+            if let errorMessage {
+                Text(errorMessage)
+                    .font(.callout)
+                    .foregroundStyle(.red)
+            }
+
+            AdminSurface {
+                ViewThatFits(in: .horizontal) {
+                    HStack(alignment: .top, spacing: 24) {
+                        ruleTextColumn
+                        Divider()
+                        ruleConfigColumn
+                    }
+
+                    VStack(alignment: .leading, spacing: 18) {
+                        ruleTextColumn
+                        Divider()
+                        ruleConfigColumn
                     }
                 }
             }
-            .formStyle(.grouped)
-            .frame(minHeight: 360)
 
-            Divider()
+            VStack(alignment: .leading, spacing: 14) {
+                AdminSectionHeader("Existing Rules", caption: "\(rules.count) configured")
 
-            List {
-                ForEach(rules) { rule in
-                    RuleRow(rule: rule, saveAndReapply: saveAndReapply, delete: deleteRule)
+                if rules.isEmpty {
+                    ContentUnavailableView("No Rules", systemImage: "line.3.horizontal.decrease.circle", description: Text("Add a rule to shape your feed automatically."))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 24)
+                } else {
+                    LazyVStack(spacing: 12) {
+                        ForEach(rules) { rule in
+                            RuleRow(rule: rule, saveAndReapply: saveAndReapply, delete: deleteRule)
+                        }
+                    }
                 }
             }
         }
-        .navigationTitle("Rules")
+    }
+
+    private var ruleTextColumn: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            TextField("Name", text: $name)
+                .font(.headline)
+                .textFieldStyle(.roundedBorder)
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Pattern")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(theme.metadata)
+                CodePatternField(placeholder: "regex|keyword|domain", text: $pattern)
+            }
+
+            if action == .boost || action == .tag {
+                TextField(action == .boost ? "Score Delta" : "Tag", text: $actionValue)
+                    .textFieldStyle(.roundedBorder)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var ruleConfigColumn: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Picker("Target", selection: $target) {
+                ForEach(RuleTarget.allCases) { target in
+                    Text(target.displayName).tag(target)
+                }
+            }
+
+            Picker("Match", selection: $matchMode) {
+                ForEach(RuleMatchMode.allCases) { mode in
+                    Text(mode.displayName).tag(mode)
+                }
+            }
+
+            Picker("Action", selection: $action) {
+                ForEach(RuleAction.allCases) { action in
+                    Text(action.displayName).tag(action)
+                }
+            }
+
+            Stepper("Priority \(priority)", value: $priority, in: -100...100)
+        }
+        .pickerStyle(.menu)
+        .frame(width: 260, alignment: .leading)
+    }
+
+    private var canAddRule: Bool {
+        !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+        !pattern.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private func addRule() {
@@ -125,73 +182,94 @@ struct RulesView: View {
 }
 
 private struct RuleRow: View {
+    @Environment(\.newsprintTheme) private var theme
     let rule: FilterRule
     let saveAndReapply: () -> Void
     let delete: (FilterRule) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                TextField("Name", text: binding(\.name))
-                    .font(.headline)
+        AdminSurface {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(alignment: .center, spacing: 12) {
+                    TextField("Name", text: binding(\.name))
+                        .font(.headline)
+                        .textFieldStyle(.plain)
 
-                Toggle("Enabled", isOn: binding(\.enabled))
-                    .labelsHidden()
+                    Toggle("Enabled", isOn: binding(\.enabled))
+                        .toggleStyle(.switch)
+                        .labelsHidden()
 
-                Button("Delete", systemImage: "trash", role: .destructive) {
-                    delete(rule)
-                }
-            }
-
-            HStack {
-                Picker("Target", selection: Binding(
-                    get: { rule.target },
-                    set: { value in
-                        rule.target = value
-                        rule.updatedAt = Date()
-                        saveAndReapply()
+                    Button("Delete", systemImage: "trash", role: .destructive) {
+                        delete(rule)
                     }
-                )) {
-                    ForEach(RuleTarget.allCases) { target in
-                        Text(target.displayName).tag(target)
-                    }
+                    .buttonStyle(.borderless)
                 }
 
-                Picker("Match", selection: Binding(
-                    get: { rule.matchMode },
-                    set: { value in
-                        rule.matchMode = value
-                        rule.updatedAt = Date()
-                        saveAndReapply()
+                ViewThatFits(in: .horizontal) {
+                    HStack(alignment: .top, spacing: 12) {
+                        configRow
+                        CodePatternField(placeholder: "Pattern", text: binding(\.pattern))
+                            .frame(minWidth: 260)
                     }
-                )) {
-                    ForEach(RuleMatchMode.allCases) { mode in
-                        Text(mode.displayName).tag(mode)
+
+                    VStack(alignment: .leading, spacing: 12) {
+                        configRow
+                        CodePatternField(placeholder: "Pattern", text: binding(\.pattern))
                     }
                 }
 
-                TextField("Pattern", text: binding(\.pattern))
-
-                Picker("Action", selection: Binding(
-                    get: { rule.action },
-                    set: { value in
-                        rule.action = value
-                        rule.updatedAt = Date()
-                        saveAndReapply()
-                    }
-                )) {
-                    ForEach(RuleAction.allCases) { action in
-                        Text(action.displayName).tag(action)
-                    }
+                HStack(spacing: 12) {
+                    TextField("Action Value", text: optionalBinding(\.actionValue))
+                        .textFieldStyle(.roundedBorder)
+                    Stepper("Priority \(rule.priority)", value: binding(\.priority), in: -100...100)
+                        .frame(width: 170)
                 }
-            }
-
-            HStack {
-                TextField("Action Value", text: optionalBinding(\.actionValue))
-                Stepper("Priority \(rule.priority)", value: binding(\.priority), in: -100...100)
             }
         }
-        .padding(.vertical, 4)
+    }
+
+    private var configRow: some View {
+        HStack(spacing: 10) {
+            Picker("Target", selection: Binding(
+                get: { rule.target },
+                set: { value in
+                    rule.target = value
+                    rule.updatedAt = Date()
+                    saveAndReapply()
+                }
+            )) {
+                ForEach(RuleTarget.allCases) { target in
+                    Text(target.displayName).tag(target)
+                }
+            }
+
+            Picker("Match", selection: Binding(
+                get: { rule.matchMode },
+                set: { value in
+                    rule.matchMode = value
+                    rule.updatedAt = Date()
+                    saveAndReapply()
+                }
+            )) {
+                ForEach(RuleMatchMode.allCases) { mode in
+                    Text(mode.displayName).tag(mode)
+                }
+            }
+
+            Picker("Action", selection: Binding(
+                get: { rule.action },
+                set: { value in
+                    rule.action = value
+                    rule.updatedAt = Date()
+                    saveAndReapply()
+                }
+            )) {
+                ForEach(RuleAction.allCases) { action in
+                    Text(action.displayName).tag(action)
+                }
+            }
+        }
+        .pickerStyle(.menu)
     }
 
     private func binding<Value>(_ keyPath: ReferenceWritableKeyPath<FilterRule, Value>) -> Binding<Value> {

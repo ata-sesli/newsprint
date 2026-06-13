@@ -5,6 +5,7 @@ import newsprintCore
 
 struct SettingsView: View {
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.newsprintTheme) private var theme
     @Query private var settingsItems: [AppSettings]
     @Query(sort: \Article.fetchedAt, order: .reverse) private var articles: [Article]
     @State private var errorMessage: String?
@@ -13,96 +14,13 @@ struct SettingsView: View {
     @State private var starredExportDocument = TextFileDocument()
 
     var body: some View {
-        Form {
+        AdminPageShell("Settings") {
             if let settings = settingsItems.first {
-                Section("Appearance") {
-                    Picker("Theme", selection: themeBinding(for: settings)) {
-                        ForEach(AppThemeChoice.allCases, id: \.self) { theme in
-                            Text(theme.displayName).tag(theme)
-                        }
-                    }
-
-                    Picker("Feed font", selection: readerFontBinding(for: settings)) {
-                        ForEach(ReaderFontChoice.allCases, id: \.self) { font in
-                            Text(font.displayName).tag(font)
-                        }
-                    }
-
-                    Stepper(
-                        "Feed font size: \(settings.readerFontSize)",
-                        value: readerFontSizeBinding(for: settings),
-                        in: AppSettings.readerFontSizeRange
-                    )
-
-                    Picker("Feed card size", selection: densityBinding(for: settings)) {
-                        ForEach(ArticleListDensity.allCases, id: \.self) { density in
-                            Text(density.displayName).tag(density)
-                        }
-                    }
-                }
-
-                Section("Refresh") {
-                    Toggle("Refresh on launch", isOn: binding(settings, \.refreshOnLaunch))
-                    Toggle("Refresh while app is open", isOn: refreshWhileOpenEnabledBinding(for: settings))
-                    if settings.refreshWhileOpenMinutes != nil {
-                        Stepper(
-                            "Every \(settings.refreshWhileOpenMinutes ?? 30) minutes",
-                            value: refreshIntervalBinding(for: settings),
-                            in: 5...240,
-                            step: 5
-                        )
-                    }
-                }
-
-                Section("Reading") {
-                    Toggle("Mark read on open", isOn: binding(settings, \.markReadOnOpen))
-                }
-
-                Section("Retention") {
-                    Stepper(
-                        "Keep unstarred articles for \(settings.retentionDays) days",
-                        value: retentionBinding(for: settings),
-                        in: 1...365
-                    )
-
-                    Text("Starred articles are never deleted automatically.")
-                        .foregroundStyle(.secondary)
-
-                    Text("Last cleanup: \(settings.lastRetentionCleanupAt?.formatted(date: .abbreviated, time: .shortened) ?? "Never")")
-                    Text("Deleted in last cleanup: \(settings.lastRetentionDeletedCount)")
-
-                    Button("Run Cleanup Now", systemImage: "trash") {
-                        runCleanup(settings: settings)
-                    }
-                }
-
-                Section("Data Ownership") {
-                    Text(databaseLocation.path)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .textSelection(.enabled)
-
-                    Button("Export Starred Articles", systemImage: "square.and.arrow.up") {
-                        exportStarredArticles()
-                    }
-
-                    Button("Delete All Local Data", systemImage: "trash", role: .destructive) {
-                        isConfirmingDeleteAll = true
-                    }
-                }
-
-                if let errorMessage {
-                    Section("Error") {
-                        Text(errorMessage)
-                            .foregroundStyle(.red)
-                    }
-                }
+                settingsContent(settings)
             } else {
                 ContentUnavailableView("Loading Settings", systemImage: "gearshape")
             }
         }
-        .formStyle(.grouped)
-        .navigationTitle("Settings")
         .task {
             ensureSettings()
         }
@@ -121,6 +39,132 @@ struct SettingsView: View {
                 errorMessage = error.localizedDescription
             }
         }
+    }
+
+    private func settingsContent(_ settings: AppSettings) -> some View {
+        VStack(alignment: .leading, spacing: 28) {
+            SettingsSection("Appearance", caption: "Tune the reading surface without changing your data.") {
+                AdminFieldRow("Theme") {
+                    Picker("", selection: themeBinding(for: settings)) {
+                        ForEach(AppThemeChoice.allCases, id: \.self) { theme in
+                            Text(theme.displayName).tag(theme)
+                        }
+                    }
+                    .labelsHidden()
+                }
+
+                AdminFieldRow("Feed font") {
+                    Picker("", selection: readerFontBinding(for: settings)) {
+                        ForEach(ReaderFontChoice.allCases, id: \.self) { font in
+                            Text(font.displayName).tag(font)
+                        }
+                    }
+                    .labelsHidden()
+                }
+
+                AdminFieldRow("Feed font size", caption: "\(settings.readerFontSize) pt") {
+                    Stepper("", value: readerFontSizeBinding(for: settings), in: AppSettings.readerFontSizeRange)
+                        .labelsHidden()
+                }
+
+                AdminFieldRow("Feed card size") {
+                    Picker("", selection: densityBinding(for: settings)) {
+                        ForEach(ArticleListDensity.allCases, id: \.self) { density in
+                            Text(density.displayName).tag(density)
+                        }
+                    }
+                    .labelsHidden()
+                }
+            }
+
+            SettingsSection("Refresh") {
+                AdminFieldRow("Refresh on launch") {
+                    Toggle("", isOn: binding(settings, \.refreshOnLaunch))
+                        .labelsHidden()
+                }
+
+                AdminFieldRow("Refresh while app is open") {
+                    Toggle("", isOn: refreshWhileOpenEnabledBinding(for: settings))
+                        .labelsHidden()
+                }
+
+                if settings.refreshWhileOpenMinutes != nil {
+                    AdminFieldRow("Refresh interval", caption: "Every \(settings.refreshWhileOpenMinutes ?? 30) minutes") {
+                        Stepper("", value: refreshIntervalBinding(for: settings), in: 5...240, step: 5)
+                            .labelsHidden()
+                    }
+                }
+            }
+
+            SettingsSection("Reading") {
+                AdminFieldRow("Mark read on open", caption: "Expanding an article marks it read.") {
+                    Toggle("", isOn: binding(settings, \.markReadOnOpen))
+                        .labelsHidden()
+                }
+            }
+
+            SettingsSection("Retention", caption: "Starred articles are never deleted automatically.") {
+                AdminFieldRow("Unstarred article retention", caption: "\(settings.retentionDays) days") {
+                    Stepper("", value: retentionBinding(for: settings), in: 1...365)
+                        .labelsHidden()
+                }
+
+                AdminFieldRow("Last cleanup", caption: settings.lastRetentionCleanupAt?.formatted(date: .abbreviated, time: .shortened) ?? "Never") {
+                    Button("Run Cleanup", systemImage: "trash") {
+                        runCleanup(settings: settings)
+                    }
+                }
+
+                AdminFieldRow("Deleted in last cleanup") {
+                    Text("\(settings.lastRetentionDeletedCount)")
+                        .font(.callout.weight(.medium))
+                        .monospacedDigit()
+                        .foregroundStyle(theme.metadata)
+                }
+            }
+
+            SettingsSection("Data Ownership") {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Database Location")
+                        .font(.callout.weight(.medium))
+                    Text(databaseLocation.path)
+                        .font(.system(.caption, design: .monospaced))
+                        .foregroundStyle(theme.metadata)
+                        .textSelection(.enabled)
+                        .padding(10)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(theme.readerSurface.opacity(0.65), in: RoundedRectangle(cornerRadius: 7))
+                }
+
+                Divider()
+
+                AdminFieldRow("Starred articles", caption: "Export saved articles as Markdown.") {
+                    Button("Export", systemImage: "square.and.arrow.up") {
+                        exportStarredArticles()
+                    }
+                }
+            }
+
+            if let errorMessage {
+                Text(errorMessage)
+                    .font(.callout)
+                    .foregroundStyle(.red)
+            }
+
+            dangerZone
+        }
+    }
+
+    private var dangerZone: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            AdminSectionHeader("Danger Zone", caption: "Permanent local data actions.")
+            Button("Delete All Local Data", systemImage: "trash", role: .destructive) {
+                isConfirmingDeleteAll = true
+            }
+            .buttonStyle(.bordered)
+            .tint(.red.opacity(0.82))
+        }
+        .padding(.top, 8)
     }
 
     private var databaseLocation: URL {
@@ -253,6 +297,30 @@ struct SettingsView: View {
             errorMessage = nil
         } catch {
             errorMessage = error.localizedDescription
+        }
+    }
+}
+
+private struct SettingsSection<Content: View>: View {
+    let title: String
+    let caption: String?
+    @ViewBuilder let content: Content
+
+    init(_ title: String, caption: String? = nil, @ViewBuilder content: () -> Content) {
+        self.title = title
+        self.caption = caption
+        self.content = content()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            AdminSectionHeader(title, caption: caption)
+            VStack(spacing: 0) {
+                content
+            }
+            .overlay(alignment: .bottom) {
+                Divider()
+            }
         }
     }
 }
