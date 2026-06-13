@@ -5,6 +5,9 @@ import newsprintCore
 
 struct ReaderView: View {
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.newsprintTheme) private var theme
+    @Environment(\.readerFontChoice) private var readerFontChoice
+    @Environment(\.readerFontSize) private var readerFontSize
     let article: Article?
 
     var body: some View {
@@ -21,6 +24,7 @@ struct ReaderView: View {
                             Text(article.title)
                                 .font(.largeTitle)
                                 .fontWeight(.semibold)
+                                .fontDesign(readerFontChoice.fontDesign)
                                 .textSelection(.enabled)
                         }
 
@@ -50,20 +54,27 @@ struct ReaderView: View {
                         ReaderContent(article: article, hackerNewsMetadata: hackerNewsMetadata)
                     }
                     .padding(24)
+                    .background(theme.readerSurface, in: RoundedRectangle(cornerRadius: 10))
                     .frame(maxWidth: 760, alignment: .leading)
+                    .padding(.vertical, 24)
+                    .padding(.horizontal, 18)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
+                .background(theme.readerBackground)
                 .contextMenu {
                     ArticleContextMenu(article: article, hackerNewsMetadata: hackerNewsMetadata)
                 }
             } else {
                 ContentUnavailableView("Select an Article", systemImage: "doc.text")
+                    .background(theme.readerBackground)
             }
         }
     }
 }
 
 private struct ReaderContent: View {
+    @Environment(\.readerFontChoice) private var readerFontChoice
+    @Environment(\.readerFontSize) private var readerFontSize
     let article: Article
     let hackerNewsMetadata: HackerNewsMetadata?
 
@@ -74,8 +85,8 @@ private struct ReaderContent: View {
                     Label("Author Comment", systemImage: "text.quote")
                         .font(.headline)
                     Text(authorComment)
-                        .font(.body)
-                        .lineSpacing(4)
+                        .font(.system(size: CGFloat(readerFontSize), design: readerFontChoice.fontDesign))
+                        .lineSpacing(6)
                         .textSelection(.enabled)
                 }
                 .padding(14)
@@ -85,8 +96,8 @@ private struct ReaderContent: View {
             }
         } else {
             Text(article.contentText ?? article.excerpt ?? "Open the original article to read the full post.")
-                .font(.body)
-                .lineSpacing(4)
+                .font(.system(size: CGFloat(readerFontSize), design: readerFontChoice.fontDesign))
+                .lineSpacing(6)
                 .textSelection(.enabled)
         }
     }

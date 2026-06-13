@@ -11,6 +11,25 @@ public final class AppSettings {
     public var markReadOnOpen: Bool
     public var lastRetentionCleanupAt: Date?
     public var lastRetentionDeletedCount: Int
+    public var themeRawValue: String
+    public var readerFontRawValue: String
+    public var readerFontSize: Int
+    public var articleListDensityRawValue: String
+
+    public var themeChoice: AppThemeChoice {
+        get { AppThemeChoice(rawValue: themeRawValue) ?? .system }
+        set { themeRawValue = newValue.rawValue }
+    }
+
+    public var readerFontChoice: ReaderFontChoice {
+        get { ReaderFontChoice(rawValue: readerFontRawValue) ?? .system }
+        set { readerFontRawValue = newValue.rawValue }
+    }
+
+    public var articleListDensity: ArticleListDensity {
+        get { ArticleListDensity(rawValue: articleListDensityRawValue) ?? .comfortable }
+        set { articleListDensityRawValue = newValue.rawValue }
+    }
 
     public init(
         retentionDays: Int = 7,
@@ -20,7 +39,11 @@ public final class AppSettings {
         openLinksInDefaultBrowser: Bool = true,
         markReadOnOpen: Bool = false,
         lastRetentionCleanupAt: Date? = nil,
-        lastRetentionDeletedCount: Int = 0
+        lastRetentionDeletedCount: Int = 0,
+        theme: AppThemeChoice = .system,
+        readerFont: ReaderFontChoice = .system,
+        readerFontSize: Int = 17,
+        articleListDensity: ArticleListDensity = .comfortable
     ) {
         self.retentionDays = retentionDays
         self.refreshOnLaunch = refreshOnLaunch
@@ -30,5 +53,17 @@ public final class AppSettings {
         self.markReadOnOpen = markReadOnOpen
         self.lastRetentionCleanupAt = lastRetentionCleanupAt
         self.lastRetentionDeletedCount = lastRetentionDeletedCount
+        self.themeRawValue = theme.rawValue
+        self.readerFontRawValue = readerFont.rawValue
+        self.readerFontSize = min(max(readerFontSize, Self.readerFontSizeRange.lowerBound), Self.readerFontSizeRange.upperBound)
+        self.articleListDensityRawValue = articleListDensity.rawValue
+    }
+
+    public static var readerFontSizeRange: ClosedRange<Int> {
+        13...26
+    }
+
+    public func clampReaderFontSize(_ value: Int) {
+        readerFontSize = min(max(value, Self.readerFontSizeRange.lowerBound), Self.readerFontSizeRange.upperBound)
     }
 }

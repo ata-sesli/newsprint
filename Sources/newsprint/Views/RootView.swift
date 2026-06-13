@@ -6,41 +6,50 @@ import newsprintCore
 struct RootView: View {
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \Article.fetchedAt, order: .reverse) private var articles: [Article]
-    @Query(sort: \Source.title) private var sources: [Source]
     @Query private var settingsItems: [AppSettings]
     @State private var selection: SidebarSelection = .inbox
     @State private var selectedArticle: Article?
+    @State private var loadedSources: [Source] = []
     @State private var refreshTask: Task<Void, Never>?
     @State private var refreshLoopTask: Task<Void, Never>?
     @State private var searchText = ""
+    @State private var sourceMutationCount = 0
+    @AppStorage("newsprint.detailPaneCollapsed") private var detailPaneCollapsed = false
     @FocusState private var searchFocused: Bool
 
     var body: some View {
-        NavigationSplitView {
-            SidebarView(selection: $selection, sources: sources, articles: articles)
-        } content: {
-            switch selection {
-            case .sources:
-                SourcesView(sources: sources, refresh: refresh)
-            case .rules:
-                RulesView()
-            case .settings:
-                SettingsView()
-            default:
-                ArticleListView(
-                    articles: filteredArticles,
-                    selectedArticle: $selectedArticle
-                )
+        PersistentThreePaneSplitView(isDetailCollapsed: $detailPaneCollapsed) {
+            NavigationStack {
+                SidebarView(selection: $selection, sources: loadedSources, articles: articles)
             }
+            .background(theme.paneBackground)
+        } content: {
+            NavigationStack {
+                contentPane
+            }
+            .background(theme.paneBackground)
+            .searchable(text: $searchText, placement: .toolbar, prompt: "Search Articles")
+            .focused($searchFocused)
         } detail: {
-            ReaderView(article: selectedArticle)
+            NavigationStack {
+                detailPane
+            }
+            .background(theme.readerBackground)
         }
         .task {
             ensureSettingsAndRefreshIfNeeded()
         }
-        .searchable(text: $searchText, placement: .toolbar, prompt: "Search Articles")
-        .focused($searchFocused)
+        .environment(\.newsprintTheme, theme)
+        .environment(\.readerFontChoice, readerFontChoice)
+        .environment(\.readerFontSize, readerFontSize)
+        .environment(\.articleListDensity, articleListDensity)
+        .preferredColorScheme(theme.colorScheme)
+        .tint(theme.tint)
+        .background(theme.windowBackground)
         .onChange(of: selectedArticle?.id) {
+            if selectedArticle != nil {
+                detailPaneCollapsed = false
+            }
             markSelectedReadOnOpenIfNeeded()
         }
         .onChange(of: settingsItems.first?.refreshWhileOpenMinutes) {
@@ -69,6 +78,61 @@ struct RootView: View {
                 NSWorkspace.shared.open(url)
             }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .newsprintToggleReaderPane)) { _ in
+            detailPaneCollapsed.toggle()
+        }
+    }
+
+    @ViewBuilder
+    private var contentPane: some View {
+        switch selection {
+        case .sources:
+            SourcesView(
+                sources: loadedSources,
+                refresh: refresh,
+                saveSource: saveSource,
+                deleteSource: deleteSource,
+                sourceChanged: fetchSources
+            )
+        case .rules:
+            RulesView()
+        case .settings:
+            SettingsView()
+        default:
+            ArticleListView(
+                articles: filteredArticles,
+                selectedArticle: $selectedArticle
+            )
+        }
+    }
+
+    @ViewBuilder
+    private var detailPane: some View {
+        if selectedArticle == nil {
+            TodaySummaryView(
+                articles: articles,
+                sources: loadedSources,
+                selectedArticle: $selectedArticle
+            )
+        } else {
+            ReaderView(article: selectedArticle)
+        }
+    }
+
+    private var theme: NewsprintTheme {
+        NewsprintTheme.make(settingsItems.first?.themeChoice ?? .system)
+    }
+
+    private var readerFontChoice: ReaderFontChoice {
+        settingsItems.first?.readerFontChoice ?? .system
+    }
+
+    private var readerFontSize: Int {
+        settingsItems.first?.readerFontSize ?? 17
+    }
+
+    private var articleListDensity: ArticleListDensity {
+        settingsItems.first?.articleListDensity ?? .comfortable
     }
 
     private var filteredArticles: [Article] {
@@ -96,6 +160,7 @@ struct RootView: View {
     private func ensureSettingsAndRefreshIfNeeded() {
         do {
             let settings = try SettingsRepository.loadOrCreate(in: modelContext)
+            fetchSources()
             if settings.refreshOnLaunch {
                 refreshAll()
             } else {
@@ -111,6 +176,7 @@ struct RootView: View {
         refreshTask?.cancel()
         refreshTask = Task {
             await FeedRefreshService(context: modelContext).refreshAll()
+            fetchSources()
         }
     }
 
@@ -118,6 +184,31 @@ struct RootView: View {
         refreshTask?.cancel()
         refreshTask = Task {
             await FeedRefreshService(context: modelContext).refresh(source: source)
+            fetchSources()
+        }
+    }
+
+    @discardableResult
+    private func saveSource(_ source: Source) throws -> Bool {
+        let inserted = try SwiftDataSourceRepository(context: modelContext).saveIfNew(source)
+        sourceMutationCount += 1
+        fetchSources()
+        return inserted
+    }
+
+    private func deleteSource(_ source: Source) throws {
+        try SwiftDataSourceRepository(context: modelContext).delete(source)
+        sourceMutationCount += 1
+        fetchSources()
+    }
+
+    private func fetchSources() {
+        do {
+            loadedSources = try modelContext.fetch(FetchDescriptor<Source>(
+                sortBy: [SortDescriptor(\Source.title)]
+            ))
+        } catch {
+            loadedSources = []
         }
     }
 

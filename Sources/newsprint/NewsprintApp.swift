@@ -5,7 +5,10 @@ import newsprintCore
 
 @main
 struct NewsprintApp: App {
+    private let modelContainer: ModelContainer
+
     init() {
+        modelContainer = Self.makeModelContainer()
         configureDockIcon()
     }
 
@@ -13,12 +16,7 @@ struct NewsprintApp: App {
         WindowGroup {
             RootView()
         }
-        .modelContainer(for: [
-            Source.self,
-            Article.self,
-            AppSettings.self,
-            FilterRule.self
-        ])
+        .modelContainer(modelContainer)
         .commands {
             CommandGroup(after: .newItem) {
                 Button("Add Source") {
@@ -59,6 +57,11 @@ struct NewsprintApp: App {
                     NotificationCenter.default.post(name: .newsprintOpenOriginal, object: nil)
                 }
                 .keyboardShortcut("o", modifiers: [])
+
+                Button("Toggle Reader Pane") {
+                    NotificationCenter.default.post(name: .newsprintToggleReaderPane, object: nil)
+                }
+                .keyboardShortcut("r", modifiers: [.command, .option])
             }
         }
     }
@@ -71,6 +74,31 @@ struct NewsprintApp: App {
 
         NSApplication.shared.applicationIconImage = image
     }
+
+    private static func makeModelContainer() -> ModelContainer {
+        do {
+            let schema = Schema([
+                Source.self,
+                Article.self,
+                AppSettings.self,
+                FilterRule.self
+            ])
+            let applicationSupportURL = FileManager.default.urls(
+                for: .applicationSupportDirectory,
+                in: .userDomainMask
+            )[0]
+            let storeDirectory = applicationSupportURL.appending(path: "newsprint")
+            try FileManager.default.createDirectory(at: storeDirectory, withIntermediateDirectories: true)
+
+            let configuration = ModelConfiguration(
+                schema: schema,
+                url: storeDirectory.appending(path: "newsprint.store")
+            )
+            return try ModelContainer(for: schema, configurations: [configuration])
+        } catch {
+            fatalError("Could not create Newsprint model container: \(error)")
+        }
+    }
 }
 
 extension Notification.Name {
@@ -81,4 +109,5 @@ extension Notification.Name {
     static let newsprintToggleStar = Notification.Name("newsprintToggleStar")
     static let newsprintToggleHidden = Notification.Name("newsprintToggleHidden")
     static let newsprintOpenOriginal = Notification.Name("newsprintOpenOriginal")
+    static let newsprintToggleReaderPane = Notification.Name("newsprintToggleReaderPane")
 }

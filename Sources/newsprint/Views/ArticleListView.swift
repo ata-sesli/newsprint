@@ -3,6 +3,7 @@ import SwiftUI
 import newsprintCore
 
 struct ArticleListView: View {
+    @Environment(\.newsprintTheme) private var theme
     let articles: [Article]
     @Binding var selectedArticle: Article?
 
@@ -19,65 +20,76 @@ struct ArticleListView: View {
                 ContentUnavailableView("No Articles", systemImage: "newspaper", description: Text("Add a source and refresh to read locally."))
             }
         }
+        .scrollContentBackground(.hidden)
+        .background(theme.paneBackground)
         .navigationTitle("Articles")
     }
 }
 
 private struct ArticleRow: View {
+    @Environment(\.articleListDensity) private var density
+    @Environment(\.newsprintTheme) private var theme
     let article: Article
     private var hackerNewsMetadata: HackerNewsMetadata? {
         HackerNewsMetadata(text: article.contentText ?? article.excerpt)
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 6) {
-                if hackerNewsMetadata != nil {
-                    HackerNewsBadge()
-                }
+        HStack(alignment: .top, spacing: 10) {
+            RoundedRectangle(cornerRadius: 2)
+                .fill(article.isRead ? Color.clear : theme.rowAccent)
+                .frame(width: 3)
+                .padding(.vertical, 2)
 
-                Text(article.title)
-                    .font(.headline)
-                    .foregroundStyle(article.isRead ? .secondary : .primary)
-                    .lineLimit(2)
+            VStack(alignment: .leading, spacing: density.rowSpacing) {
+                HStack(spacing: 6) {
+                    if hackerNewsMetadata != nil {
+                        HackerNewsBadge()
+                    }
 
-                if article.isStarred {
-                    Image(systemName: "star.fill")
-                        .foregroundStyle(.yellow)
-                }
+                    Text(article.title)
+                        .font(.headline)
+                        .foregroundStyle(article.isRead ? .secondary : .primary)
+                        .lineLimit(2)
 
-                if article.isHidden {
-                    Image(systemName: "eye.slash")
-                        .foregroundStyle(.secondary)
-                }
-            }
+                    if article.isStarred {
+                        Image(systemName: "star.fill")
+                            .foregroundStyle(.yellow)
+                    }
 
-            Text(metadata)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
-            if let hackerNewsMetadata {
-                HackerNewsStatLabels(metadata: hackerNewsMetadata)
-            }
-
-            if let preview = previewText, !preview.isEmpty {
-                Text(preview)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(3)
-            }
-
-            if !article.tagNames.isEmpty {
-                HStack {
-                    ForEach(article.tagNames, id: \.self) { tag in
-                        Label(tag, systemImage: "tag")
-                            .font(.caption)
+                    if article.isHidden {
+                        Image(systemName: "eye.slash")
                             .foregroundStyle(.secondary)
+                    }
+                }
+
+                Text(metadata)
+                    .font(.caption)
+                    .foregroundStyle(theme.metadata)
+
+                if let hackerNewsMetadata {
+                    HackerNewsStatLabels(metadata: hackerNewsMetadata)
+                }
+
+                if let preview = previewText, !preview.isEmpty {
+                    Text(preview)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(density.previewLineLimit)
+                }
+
+                if !article.tagNames.isEmpty {
+                    HStack {
+                        ForEach(article.tagNames, id: \.self) { tag in
+                            Label(tag, systemImage: "tag")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
                     }
                 }
             }
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, density.rowVerticalPadding)
     }
 
     private var metadata: String {

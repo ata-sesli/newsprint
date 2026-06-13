@@ -4,13 +4,16 @@ import UniformTypeIdentifiers
 import newsprintCore
 
 struct SourcesView: View {
-    @Environment(\.modelContext) private var modelContext
     let sources: [Source]
     let refresh: (Source) -> Void
+    let saveSource: (Source) throws -> Bool
+    let deleteSource: (Source) throws -> Void
+    let sourceChanged: () -> Void
     @State private var title = ""
     @State private var urlString = ""
     @State private var kind: SourceKind = .rss
     @State private var errorMessage: String?
+    @State private var sourceMessage: String?
     @State private var discoveredFeeds: [DiscoveredFeed] = []
     @State private var isDiscovering = false
     @State private var youtubeChannel = ""
@@ -21,138 +24,151 @@ struct SourcesView: View {
     @State private var exportDocument = TextFileDocument()
 
     var body: some View {
-        VStack(spacing: 0) {
-            Form {
-                Section("Add Source") {
-                    TextField("Title", text: $title)
-                    TextField("Feed or Website URL", text: $urlString)
-                    Picker("Kind", selection: $kind) {
-                        ForEach(SourceKind.allCases) { kind in
-                            Text(kind.displayName).tag(kind)
+        Form {
+            Section("Add Source") {
+                TextField("Title", text: $title)
+                TextField("Feed or Website URL", text: $urlString)
+                Picker("Kind", selection: $kind) {
+                    ForEach(SourceKind.allCases) { kind in
+                        Text(kind.displayName).tag(kind)
+                    }
+                }
+                HStack {
+                    Button(isDiscovering ? "Checking..." : "Add Source", systemImage: "plus") {
+                        Task {
+                            await addSource()
                         }
                     }
+                    .disabled(isDiscovering)
+                    .buttonStyle(.borderedProminent)
+
+                    if let errorMessage {
+                        Text(errorMessage)
+                            .foregroundStyle(.red)
+                    }
+                }
+            }
+
+            Section("YouTube") {
+                TextField("Channel ID or feed URL", text: $youtubeChannel)
+                Button("Add YouTube Feed", systemImage: "play.rectangle") {
+                    addYouTubeFeed()
+                }
+                .disabled(youtubeChannel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .buttonStyle(.bordered)
+            }
+
+            if !sources.isEmpty {
+                Section("Added Sources") {
+                    ForEach(sources) { source in
+                        SourceRow(
+                            source: source,
+                            refresh: refresh,
+                            deleteSource: deleteSource,
+                            sourceChanged: sourceChanged
+                        )
+                    }
+                }
+            }
+
+            Section("Presets") {
+                ForEach(PresetSourceCatalog.all) { preset in
                     HStack {
-                        Button(isDiscovering ? "Checking..." : "Add Source", systemImage: "plus") {
-                            Task {
-                                await addSource()
-                            }
+                        VStack(alignment: .leading) {
+                            Text(preset.title)
+                            Text(preset.category)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
                         }
-                        .disabled(isDiscovering)
-                        .buttonStyle(.borderedProminent)
-
-                        if let errorMessage {
-                            Text(errorMessage)
-                                .foregroundStyle(.red)
+                        Spacer()
+                        Button("Add", systemImage: "plus.circle") {
+                            addPreset(preset)
                         }
+                        .buttonStyle(.borderless)
                     }
                 }
 
-                Section("YouTube") {
-                    TextField("Channel ID or feed URL", text: $youtubeChannel)
-                    Button("Add YouTube Feed", systemImage: "play.rectangle") {
-                        addYouTubeFeed()
+                if let sourceMessage {
+                    Text(sourceMessage)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Section("Import and Export") {
+                HStack {
+                    Button("Import OPML", systemImage: "square.and.arrow.down") {
+                        showingImporter = true
                     }
-                    .disabled(youtubeChannel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .buttonStyle(.bordered)
+
+                    Button("Export OPML", systemImage: "square.and.arrow.up") {
+                        exportOPML()
+                    }
+                    .buttonStyle(.bordered)
                 }
 
-                Section("Presets") {
-                    ForEach(PresetSourceCatalog.all) { preset in
+                if let importMessage {
+                    Text(importMessage)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            if !discoveredFeeds.isEmpty {
+                Section("Discovered Feeds") {
+                    ForEach(discoveredFeeds) { feed in
                         HStack {
                             VStack(alignment: .leading) {
-                                Text(preset.title)
-                                Text(preset.category)
+                                Text(feed.title ?? feed.url.host() ?? feed.url.absoluteString)
+                                Text(feed.url.absoluteString)
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
+                                    .textSelection(.enabled)
+                            }
+
+                            Spacer()
+
+                            Text(feed.type.displayName)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+
+                            Button("Add", systemImage: "plus.circle") {
+                                addDiscoveredFeed(feed)
+                            }
+                            .buttonStyle(.borderless)
+                        }
+                    }
+                }
+            }
+
+            if let importPreview, !importPreview.sources.isEmpty {
+                Section("OPML Preview") {
+                    ForEach(importPreview.sources, id: \.feedURL) { source in
+                        HStack {
+                            VStack(alignment: .leading) {
+                                Text(source.title)
+                                Text(source.feedURL.absoluteString)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .textSelection(.enabled)
                             }
                             Spacer()
-                            Button("Add", systemImage: "plus.circle") {
-                                addPreset(preset)
-                            }
-                        }
-                    }
-                }
-
-                Section("Import and Export") {
-                    HStack {
-                        Button("Import OPML", systemImage: "square.and.arrow.down") {
-                            showingImporter = true
-                        }
-
-                        Button("Export OPML", systemImage: "square.and.arrow.up") {
-                            exportOPML()
-                        }
-                    }
-
-                    if let importMessage {
-                        Text(importMessage)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-
-                if !discoveredFeeds.isEmpty {
-                    Section("Discovered Feeds") {
-                        ForEach(discoveredFeeds) { feed in
-                            HStack {
-                                VStack(alignment: .leading) {
-                                    Text(feed.title ?? feed.url.host() ?? feed.url.absoluteString)
-                                    Text(feed.url.absoluteString)
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                        .textSelection(.enabled)
-                                }
-
-                                Spacer()
-
-                                Text(feed.type.displayName)
+                            if let category = source.category {
+                                Text(category)
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
-
-                                Button("Add", systemImage: "plus.circle") {
-                                    addDiscoveredFeed(feed)
-                                }
                             }
                         }
                     }
-                }
 
-                if let importPreview, !importPreview.sources.isEmpty {
-                    Section("OPML Preview") {
-                        ForEach(importPreview.sources, id: \.feedURL) { source in
-                            HStack {
-                                VStack(alignment: .leading) {
-                                    Text(source.title)
-                                    Text(source.feedURL.absoluteString)
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                        .textSelection(.enabled)
-                                }
-                                Spacer()
-                                if let category = source.category {
-                                    Text(category)
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                }
-                            }
-                        }
-
-                        Button("Import \(importPreview.sources.count) Sources", systemImage: "tray.and.arrow.down") {
-                            importSources(from: importPreview)
-                        }
-                        .buttonStyle(.borderedProminent)
+                    Button("Import \(importPreview.sources.count) Sources", systemImage: "tray.and.arrow.down") {
+                        importSources(from: importPreview)
                     }
+                    .buttonStyle(.borderedProminent)
                 }
             }
-            .formStyle(.grouped)
-            .frame(minHeight: 460)
 
-            Divider()
-
-            List {
-                ForEach(sources) { source in
-                    SourceRow(source: source, refresh: refresh)
-                }
-            }
         }
+        .formStyle(.grouped)
         .navigationTitle("Sources")
         .fileImporter(isPresented: $showingImporter, allowedContentTypes: [.opml, .xml]) { result in
             importOPML(from: result)
@@ -203,8 +219,9 @@ struct SourcesView: View {
         )
 
         do {
-            let inserted = try SwiftDataSourceRepository(context: modelContext).saveIfNew(source)
+            let inserted = try saveSource(source)
             errorMessage = inserted ? nil : "That source is already added."
+            sourceMessage = inserted ? "Added \(source.title)." : "Already added: \(source.title)."
             title = ""
             urlString = ""
             kind = .rss
@@ -242,10 +259,12 @@ struct SourcesView: View {
 
     private func saveNewSource(_ source: Source) {
         do {
-            let inserted = try SwiftDataSourceRepository(context: modelContext).saveIfNew(source)
+            let inserted = try saveSource(source)
             errorMessage = inserted ? nil : "That source is already added."
+            sourceMessage = inserted ? "Added \(source.title)." : "Already added: \(source.title)."
         } catch {
             errorMessage = error.localizedDescription
+            sourceMessage = nil
         }
     }
 
@@ -265,8 +284,6 @@ struct SourcesView: View {
     private func importSources(from preview: OPMLImportPreview) {
         var imported = 0
         var skipped = 0
-        let repository = SwiftDataSourceRepository(context: modelContext)
-
         for importedSource in preview.sources {
             let source = Source(
                 title: importedSource.title,
@@ -276,7 +293,7 @@ struct SourcesView: View {
                 category: importedSource.category
             )
             do {
-                if try repository.saveIfNew(source) {
+                if try saveSource(source) {
                     imported += 1
                 } else {
                     skipped += 1
@@ -317,6 +334,8 @@ private struct SourceRow: View {
     @Environment(\.modelContext) private var modelContext
     let source: Source
     let refresh: (Source) -> Void
+    let deleteSource: (Source) throws -> Void
+    let sourceChanged: () -> Void
     @State private var isConfirmingDelete = false
 
     var body: some View {
@@ -342,6 +361,7 @@ private struct SourceRow: View {
                         source.enabled = value
                         source.updatedAt = Date()
                         try? modelContext.save()
+                        sourceChanged()
                     }
                 ))
                 .labelsHidden()
@@ -349,10 +369,12 @@ private struct SourceRow: View {
                 Button("Refresh", systemImage: "arrow.clockwise") {
                     refresh(source)
                 }
+                .buttonStyle(.borderless)
 
                 Button("Delete", systemImage: "trash", role: .destructive) {
                     isConfirmingDelete = true
                 }
+                .buttonStyle(.borderless)
             }
 
             HStack(spacing: 12) {
@@ -378,7 +400,7 @@ private struct SourceRow: View {
         .padding(.vertical, 4)
         .confirmationDialog("Delete this source and its articles?", isPresented: $isConfirmingDelete) {
             Button("Delete Source", role: .destructive) {
-                try? SwiftDataSourceRepository(context: modelContext).delete(source)
+                try? deleteSource(source)
             }
         }
     }
@@ -387,6 +409,7 @@ private struct SourceRow: View {
         change()
         source.updatedAt = Date()
         try? modelContext.save()
+        sourceChanged()
     }
 }
 
