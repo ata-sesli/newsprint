@@ -75,6 +75,11 @@ struct SettingsView: View {
                     }
                     .labelsHidden()
                 }
+
+                AdminFieldRow("Web preview padding", caption: "\(settings.webPreviewHorizontalPadding) px") {
+                    Stepper("", value: webPreviewPaddingBinding(for: settings), in: AppSettings.webPreviewHorizontalPaddingRange)
+                        .labelsHidden()
+                }
             }
 
             SettingsSection("Refresh") {
@@ -217,6 +222,16 @@ struct SettingsView: View {
             get: { settings.articleListDensity },
             set: { value in
                 settings.articleListDensity = value
+                saveSettings()
+            }
+        )
+    }
+
+    private func webPreviewPaddingBinding(for settings: AppSettings) -> Binding<Int> {
+        Binding(
+            get: { settings.webPreviewHorizontalPadding },
+            set: { value in
+                settings.clampWebPreviewHorizontalPadding(value)
                 saveSettings()
             }
         )

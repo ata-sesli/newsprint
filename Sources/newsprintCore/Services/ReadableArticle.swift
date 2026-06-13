@@ -212,6 +212,50 @@ public enum ArticlePreviewTarget {
     }
 }
 
+public enum ArticleReaderContentPolicy {
+    public static func localReadableArticle(for article: Article, minimumTextLength: Int = 500) -> ReadableArticle? {
+        guard HackerNewsMetadata(text: article.contentText ?? article.excerpt) == nil else {
+            return nil
+        }
+
+        let rawText = article.contentText ?? article.excerpt ?? HTMLTextExtractor.text(fromHTML: article.contentHTML)
+        guard let text = HTMLTextExtractor.text(fromHTML: rawText), text.count >= minimumTextLength else {
+            return nil
+        }
+
+        return ReadableArticle(
+            title: article.title,
+            byline: article.author,
+            siteName: article.sourceTitle,
+            url: ArticlePreviewTarget.url(for: article) ?? article.url,
+            html: "<p>\(escapeHTML(text))</p>",
+            text: text
+        )
+    }
+
+    public static func githubReadmeURL(for url: URL) -> URL? {
+        guard url.host()?.lowercased() == "github.com" else {
+            return nil
+        }
+
+        let components = url.pathComponents.filter { $0 != "/" }
+        guard components.count == 2,
+              !components[0].isEmpty,
+              !components[1].isEmpty else {
+            return nil
+        }
+
+        return URL(string: "https://raw.githubusercontent.com/\(components[0])/\(components[1])/HEAD/README.md")
+    }
+
+    private static func escapeHTML(_ value: String) -> String {
+        value
+            .replacingOccurrences(of: "&", with: "&amp;")
+            .replacingOccurrences(of: "<", with: "&lt;")
+            .replacingOccurrences(of: ">", with: "&gt;")
+    }
+}
+
 public enum WebContentBlockerRules {
     public static let identifier = "NewsprintCuratedContentBlocker"
 

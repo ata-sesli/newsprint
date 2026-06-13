@@ -82,6 +82,10 @@ private struct ArticleListDensityKey: EnvironmentKey {
     static let defaultValue = ArticleListDensity.comfortable
 }
 
+private struct WebPreviewHorizontalPaddingKey: EnvironmentKey {
+    static let defaultValue = 8
+}
+
 extension EnvironmentValues {
     var newsprintTheme: NewsprintTheme {
         get { self[NewsprintThemeKey.self] }
@@ -101,6 +105,11 @@ extension EnvironmentValues {
     var articleListDensity: ArticleListDensity {
         get { self[ArticleListDensityKey.self] }
         set { self[ArticleListDensityKey.self] = newValue }
+    }
+
+    var webPreviewHorizontalPadding: Int {
+        get { self[WebPreviewHorizontalPaddingKey.self] }
+        set { self[WebPreviewHorizontalPaddingKey.self] = newValue }
     }
 }
 
@@ -183,6 +192,39 @@ extension ArticleListDensity {
             1.18
         case .newspaper:
             1.55
+        }
+    }
+
+    var metadataScale: CGFloat {
+        switch self {
+        case .compact:
+            0.72
+        case .comfortable:
+            0.82
+        case .newspaper:
+            1.02
+        }
+    }
+
+    var metadataIconScale: CGFloat {
+        switch self {
+        case .compact:
+            0.86
+        case .comfortable:
+            1.0
+        case .newspaper:
+            1.22
+        }
+    }
+
+    var metadataBadgePadding: EdgeInsets {
+        switch self {
+        case .compact:
+            EdgeInsets(top: 2, leading: 5, bottom: 2, trailing: 5)
+        case .comfortable:
+            EdgeInsets(top: 3, leading: 6, bottom: 3, trailing: 6)
+        case .newspaper:
+            EdgeInsets(top: 5, leading: 9, bottom: 5, trailing: 9)
         }
     }
 

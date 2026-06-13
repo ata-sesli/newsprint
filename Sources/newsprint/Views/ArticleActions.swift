@@ -65,12 +65,14 @@ struct ArticleContextMenu: View {
 }
 
 struct HackerNewsBadge: View {
+    var fontSize: CGFloat = 11
+    var padding: EdgeInsets = EdgeInsets(top: 2, leading: 5, bottom: 2, trailing: 5)
+
     var body: some View {
         Text("HN")
-            .font(.caption2.weight(.bold))
+            .font(.system(size: fontSize, weight: .bold, design: .rounded))
             .foregroundStyle(.white)
-            .padding(.horizontal, 5)
-            .padding(.vertical, 2)
+            .padding(padding)
             .background(Color.orange, in: RoundedRectangle(cornerRadius: 3))
             .accessibilityLabel("Hacker News")
     }

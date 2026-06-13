@@ -13,6 +13,7 @@ public final class AppSettings {
     public var readerFontRawValue: String
     public var readerFontSize: Int
     public var articleListDensityRawValue: String
+    public var webPreviewHorizontalPadding: Int = 8
 
     public var themeChoice: AppThemeChoice {
         get { AppThemeChoice(rawValue: themeRawValue) ?? .system }
@@ -39,7 +40,8 @@ public final class AppSettings {
         theme: AppThemeChoice = .system,
         readerFont: ReaderFontChoice = .system,
         readerFontSize: Int = 17,
-        articleListDensity: ArticleListDensity = .comfortable
+        articleListDensity: ArticleListDensity = .comfortable,
+        webPreviewHorizontalPadding: Int = 8
     ) {
         self.retentionDays = retentionDays
         self.refreshOnLaunch = refreshOnLaunch
@@ -51,6 +53,7 @@ public final class AppSettings {
         self.readerFontRawValue = readerFont.rawValue
         self.readerFontSize = min(max(readerFontSize, Self.readerFontSizeRange.lowerBound), Self.readerFontSizeRange.upperBound)
         self.articleListDensityRawValue = articleListDensity.rawValue
+        self.webPreviewHorizontalPadding = min(max(webPreviewHorizontalPadding, Self.webPreviewHorizontalPaddingRange.lowerBound), Self.webPreviewHorizontalPaddingRange.upperBound)
     }
 
     public static var readerFontSizeRange: ClosedRange<Int> {
@@ -59,5 +62,13 @@ public final class AppSettings {
 
     public func clampReaderFontSize(_ value: Int) {
         readerFontSize = min(max(value, Self.readerFontSizeRange.lowerBound), Self.readerFontSizeRange.upperBound)
+    }
+
+    public static var webPreviewHorizontalPaddingRange: ClosedRange<Int> {
+        0...32
+    }
+
+    public func clampWebPreviewHorizontalPadding(_ value: Int) {
+        webPreviewHorizontalPadding = min(max(value, Self.webPreviewHorizontalPaddingRange.lowerBound), Self.webPreviewHorizontalPaddingRange.upperBound)
     }
 }

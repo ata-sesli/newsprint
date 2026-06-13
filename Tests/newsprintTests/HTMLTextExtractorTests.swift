@@ -9,3 +9,10 @@ import Testing
     #expect(text == "Hello World Swift & feeds now")
 }
 
+@Test func htmlExtractorDecodesCommonNamedAndNumericEntities() {
+    let html = "You&rsquo;re fast&mdash;not &ldquo;slow&#8221;."
+
+    let text = HTMLTextExtractor.text(fromHTML: html)
+
+    #expect(text == "You're fast-not \"slow\".")
+}

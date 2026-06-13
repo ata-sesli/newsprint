@@ -43,6 +43,7 @@ struct RootView: View {
         .environment(\.readerFontChoice, readerFontChoice)
         .environment(\.readerFontSize, readerFontSize)
         .environment(\.articleListDensity, articleListDensity)
+        .environment(\.webPreviewHorizontalPadding, webPreviewHorizontalPadding)
         .preferredColorScheme(theme.colorScheme)
         .tint(theme.tint)
         .background(theme.windowBackground)
@@ -176,6 +177,10 @@ struct RootView: View {
 
     private var articleListDensity: ArticleListDensity {
         settingsItems.first?.articleListDensity ?? .comfortable
+    }
+
+    private var webPreviewHorizontalPadding: Int {
+        settingsItems.first?.webPreviewHorizontalPadding ?? 8
     }
 
     private var activeFilter: ArticleFilter {

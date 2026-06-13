@@ -31,6 +31,18 @@ final class ArticlePreviewViewModel: ObservableObject {
         state = .loading(url)
 
         do {
+            if let localReadable = ArticleReaderContentPolicy.localReadableArticle(for: article) {
+                state = .loaded(localReadable)
+                return
+            }
+
+            if let readmeURL = ArticleReaderContentPolicy.githubReadmeURL(for: url) {
+                let markdown = try await fetcher.fetch(url: readmeURL)
+                guard currentArticleID == article.id else { return }
+                state = .loaded(readmeArticle(from: article, readmeURL: readmeURL, markdown: markdown))
+                return
+            }
+
             let html = try await fetcher.fetch(url: url)
             let readable = try extractor.extract(html: html, url: url)
             guard currentArticleID == article.id else { return }
@@ -51,7 +63,7 @@ final class ArticlePreviewViewModel: ObservableObject {
     }
 
     private func fallbackArticle(from article: Article, url: URL) -> ReadableArticle? {
-        guard let text = (article.contentText ?? article.excerpt)?.nilIfBlank else {
+        guard let text = HTMLTextExtractor.text(fromHTML: article.contentText ?? article.excerpt), text.nilIfBlank != nil else {
             return nil
         }
         return ReadableArticle(
@@ -60,6 +72,18 @@ final class ArticlePreviewViewModel: ObservableObject {
             siteName: article.sourceTitle,
             url: url,
             html: "<p>\(text)</p>",
+            text: text
+        )
+    }
+
+    private func readmeArticle(from article: Article, readmeURL: URL, markdown: String) -> ReadableArticle {
+        let text = markdown.trimmingCharacters(in: .whitespacesAndNewlines)
+        return ReadableArticle(
+            title: "\(article.title) README",
+            byline: article.author,
+            siteName: article.sourceTitle,
+            url: readmeURL,
+            html: "<pre><code>\(text)</code></pre>",
             text: text
         )
     }
@@ -114,11 +138,6 @@ struct ArticlePreviewPane: View {
                 }
                 .buttonStyle(.borderless)
             }
-
-            Button("Hide Preview", systemImage: "sidebar.right") {
-                isCollapsed = true
-            }
-            .buttonStyle(.borderless)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)

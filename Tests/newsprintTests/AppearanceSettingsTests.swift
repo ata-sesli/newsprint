@@ -8,6 +8,7 @@ import Testing
     #expect(settings.readerFontChoice == .system)
     #expect(settings.readerFontSize == 17)
     #expect(settings.articleListDensity == .comfortable)
+    #expect(settings.webPreviewHorizontalPadding == 8)
     #expect(ArticleListDensity.newspaper.displayName == "Newspaper")
 }
 
@@ -33,4 +34,17 @@ import Testing
 
     settings.clampReaderFontSize(19)
     #expect(settings.readerFontSize == 19)
+}
+
+@Test func appSettingsWebPreviewPaddingIsClamped() {
+    let settings = AppSettings()
+
+    settings.clampWebPreviewHorizontalPadding(-4)
+    #expect(settings.webPreviewHorizontalPadding == 0)
+
+    settings.clampWebPreviewHorizontalPadding(80)
+    #expect(settings.webPreviewHorizontalPadding == 32)
+
+    settings.clampWebPreviewHorizontalPadding(8)
+    #expect(settings.webPreviewHorizontalPadding == 8)
 }

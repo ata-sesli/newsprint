@@ -81,6 +81,45 @@ import Testing
     #expect(ArticlePreviewTarget.url(for: article)?.absoluteString == "https://example.com/story")
 }
 
+@Test func readerPolicyPrefersLongLocalNonHackerNewsText() throws {
+    let article = Article(
+        id: "blog",
+        sourceID: UUID(),
+        sourceTitle: "GitHub Engineering",
+        title: "Modernizing navigation",
+        url: URL(string: "https://github.blog/example")!,
+        author: "Alex",
+        excerpt: "When you&rsquo;re working through a backlog&mdash;latency matters. " + String(repeating: "Local feed text. ", count: 30),
+        contentText: nil
+    )
+
+    let readable = try #require(ArticleReaderContentPolicy.localReadableArticle(for: article))
+
+    #expect(readable.title == "Modernizing navigation")
+    #expect(readable.byline == "Alex")
+    #expect(readable.siteName == "GitHub Engineering")
+    #expect(readable.text.contains("When you're working through a backlog-latency matters."))
+}
+
+@Test func readerPolicyDoesNotPreferHackerNewsMetadataAsLocalArticle() {
+    let article = Article(
+        id: "hn-local",
+        sourceID: UUID(),
+        sourceTitle: "Hacker News",
+        title: "HN",
+        url: URL(string: "https://news.ycombinator.com/item?id=1")!,
+        contentText: "Article URL: https://example.com/story Comments URL: https://news.ycombinator.com/item?id=1 Points: 3 # Comments: 4"
+    )
+
+    #expect(ArticleReaderContentPolicy.localReadableArticle(for: article) == nil)
+}
+
+@Test func readerPolicyBuildsGitHubReadmeURLForRepository() {
+    let url = URL(string: "https://github.com/apple/swift")!
+
+    #expect(ArticleReaderContentPolicy.githubReadmeURL(for: url)?.absoluteString == "https://raw.githubusercontent.com/apple/swift/HEAD/README.md")
+}
+
 @Test func previewModeFallsBackToReaderForInvalidRawValue() {
     #expect(PreviewMode(rawValue: "web") == .web)
     #expect(PreviewMode(storedRawValue: "bogus") == .reader)

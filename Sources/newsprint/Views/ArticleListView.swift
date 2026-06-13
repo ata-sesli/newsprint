@@ -60,9 +60,12 @@ struct ArticleFeedView: View {
                 reloadGeneration: reloadGeneration,
                 onToggleExpanded: { article in
                     focusedArticleID = article.id
+                    expandedArticleID = expandedArticleID == article.id ? nil : article.id
+                },
+                onOpenInPreview: { article in
+                    focusedArticleID = article.id
                     previewArticleID = article.id
                     isPreviewCollapsed = false
-                    expandedArticleID = expandedArticleID == article.id ? nil : article.id
                 },
                 onNearEnd: onNearEnd,
                 onArticleAction: onArticleAction
@@ -103,6 +106,7 @@ struct ArticleFeedCard: View {
     let hackerNewsMetadata: HackerNewsMetadata?
     let metadataText: String
     let onToggleExpanded: () -> Void
+    let onOpenInPreview: () -> Void
     let onArticleAction: (Article, ArticleStateMutation) -> Void
 
     var body: some View {
@@ -159,20 +163,37 @@ struct ArticleFeedCard: View {
         VStack(alignment: .leading, spacing: density.rowSpacing) {
             HStack(spacing: 8) {
                 if hackerNewsMetadata != nil {
-                    HackerNewsBadge()
+                    HackerNewsBadge(
+                        fontSize: metadataFontSize * 0.78,
+                        padding: density.metadataBadgePadding
+                    )
                 }
 
                 Text(metadataText)
-                    .font(.caption.weight(.medium))
+                    .font(.system(size: metadataFontSize, weight: .semibold, design: readerFontChoice.fontDesign))
                     .foregroundStyle(theme.metadata)
+
+                Button {
+                    onOpenInPreview()
+                } label: {
+                    Image(systemName: "arrow.right")
+                        .font(.system(size: metadataFontSize * 1.10, weight: .bold, design: .rounded))
+                        .frame(width: metadataIconFrame, height: metadataIconFrame)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(theme.tint)
+                .help("Open in Side")
 
                 if article.isStarred {
                     Image(systemName: "star.fill")
+                        .font(.system(size: metadataFontSize, weight: .semibold))
                         .foregroundStyle(.yellow)
                 }
 
                 if article.isHidden {
                     Image(systemName: "eye.slash")
+                        .font(.system(size: metadataFontSize, weight: .semibold))
                         .foregroundStyle(.secondary)
                 }
 
@@ -198,7 +219,15 @@ struct ArticleFeedCard: View {
         guard hackerNewsMetadata == nil else {
             return nil
         }
-        return (article.contentText ?? article.excerpt)?.nilIfBlank
+        return HTMLTextExtractor.text(fromHTML: article.contentText ?? article.excerpt)?.nilIfBlank
+    }
+
+    private var metadataFontSize: CGFloat {
+        max(12, CGFloat(readerFontSize) * density.metadataScale)
+    }
+
+    private var metadataIconFrame: CGFloat {
+        max(24, CGFloat(readerFontSize) * density.metadataIconScale)
     }
 
     private var tagRow: some View {
@@ -274,7 +303,7 @@ struct ExpandedArticleContent: View {
         guard hackerNewsMetadata == nil else {
             return nil
         }
-        return (article.contentText ?? article.excerpt)?.nilIfBlank
+        return HTMLTextExtractor.text(fromHTML: article.contentText ?? article.excerpt)?.nilIfBlank
     }
 
     private func authorCommentBlock(_ text: String) -> some View {

@@ -6,6 +6,7 @@ struct ArticleFeedCollectionView: NSViewRepresentable {
     let items: [ArticleFeedItemModel]
     let reloadGeneration: Int
     let onToggleExpanded: (Article) -> Void
+    let onOpenInPreview: (Article) -> Void
     let onNearEnd: (Int) -> Void
     let onArticleAction: (Article, ArticleStateMutation) -> Void
 
@@ -14,6 +15,7 @@ struct ArticleFeedCollectionView: NSViewRepresentable {
             items: items,
             reloadGeneration: reloadGeneration,
             onToggleExpanded: onToggleExpanded,
+            onOpenInPreview: onOpenInPreview,
             onNearEnd: onNearEnd,
             onArticleAction: onArticleAction
         )
@@ -47,6 +49,7 @@ struct ArticleFeedCollectionView: NSViewRepresentable {
         scrollView.hasVerticalScroller = true
         scrollView.hasHorizontalScroller = false
         scrollView.autohidesScrollers = true
+        scrollView.scrollerStyle = .overlay
         scrollView.documentView = collectionView
         scrollView.contentView.postsBoundsChangedNotifications = true
 
@@ -65,6 +68,7 @@ struct ArticleFeedCollectionView: NSViewRepresentable {
             items: items,
             reloadGeneration: reloadGeneration,
             onToggleExpanded: onToggleExpanded,
+            onOpenInPreview: onOpenInPreview,
             onNearEnd: onNearEnd,
             onArticleAction: onArticleAction
         )
@@ -84,6 +88,7 @@ final class ArticleFeedCollectionCoordinator: NSObject, NSCollectionViewDataSour
     private let heightCache = ArticleFeedHeightCache()
     private var lastLayoutWidth: CGFloat = 0
     private var onToggleExpanded: (Article) -> Void
+    private var onOpenInPreview: (Article) -> Void
     private var onNearEnd: (Int) -> Void
     private var onArticleAction: (Article, ArticleStateMutation) -> Void
 
@@ -91,12 +96,14 @@ final class ArticleFeedCollectionCoordinator: NSObject, NSCollectionViewDataSour
         items: [ArticleFeedItemModel],
         reloadGeneration: Int,
         onToggleExpanded: @escaping (Article) -> Void,
+        onOpenInPreview: @escaping (Article) -> Void,
         onNearEnd: @escaping (Int) -> Void,
         onArticleAction: @escaping (Article, ArticleStateMutation) -> Void
     ) {
         self.items = items
         self.reloadGeneration = reloadGeneration
         self.onToggleExpanded = onToggleExpanded
+        self.onOpenInPreview = onOpenInPreview
         self.onNearEnd = onNearEnd
         self.onArticleAction = onArticleAction
     }
@@ -105,6 +112,7 @@ final class ArticleFeedCollectionCoordinator: NSObject, NSCollectionViewDataSour
         items newItems: [ArticleFeedItemModel],
         reloadGeneration newReloadGeneration: Int,
         onToggleExpanded: @escaping (Article) -> Void,
+        onOpenInPreview: @escaping (Article) -> Void,
         onNearEnd: @escaping (Int) -> Void,
         onArticleAction: @escaping (Article, ArticleStateMutation) -> Void
     ) {
@@ -121,6 +129,7 @@ final class ArticleFeedCollectionCoordinator: NSObject, NSCollectionViewDataSour
         items = newItems
         reloadGeneration = newReloadGeneration
         self.onToggleExpanded = onToggleExpanded
+        self.onOpenInPreview = onOpenInPreview
         self.onNearEnd = onNearEnd
         self.onArticleAction = onArticleAction
 
@@ -172,6 +181,9 @@ final class ArticleFeedCollectionCoordinator: NSObject, NSCollectionViewDataSour
             model: model,
             onToggleExpanded: { [weak self] article in
                 self?.onToggleExpanded(article)
+            },
+            onOpenInPreview: { [weak self] article in
+                self?.onOpenInPreview(article)
             },
             onArticleAction: { [weak self] article, mutation in
                 self?.onArticleAction(article, mutation)
@@ -236,6 +248,7 @@ final class ArticleFeedCollectionCoordinator: NSObject, NSCollectionViewDataSour
             hackerNewsMetadata: model.hackerNewsMetadata,
             metadataText: model.metadataText,
             onToggleExpanded: {},
+            onOpenInPreview: {},
             onArticleAction: { _, _ in }
         )
         .environment(\.newsprintTheme, model.theme)
@@ -301,6 +314,7 @@ final class ArticleFeedCollectionItem: NSCollectionViewItem {
     func configure(
         model: ArticleFeedItemModel,
         onToggleExpanded: @escaping (Article) -> Void,
+        onOpenInPreview: @escaping (Article) -> Void,
         onArticleAction: @escaping (Article, ArticleStateMutation) -> Void
     ) {
         let rootView = AnyView(
@@ -311,6 +325,9 @@ final class ArticleFeedCollectionItem: NSCollectionViewItem {
                 metadataText: model.metadataText,
                 onToggleExpanded: {
                     onToggleExpanded(model.article)
+                },
+                onOpenInPreview: {
+                    onOpenInPreview(model.article)
                 },
                 onArticleAction: onArticleAction
             )
