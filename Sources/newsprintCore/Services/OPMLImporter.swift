@@ -66,6 +66,7 @@ public struct OPMLImporter {
 private final class OPMLParserDelegate: NSObject, XMLParserDelegate {
     var sources: [OPMLImportedSource] = []
     private var categoryStack: [String] = []
+    private var outlinePushedCategoryStack: [Bool] = []
     private var seenURLs: Set<String> = []
 
     func parser(
@@ -77,7 +78,8 @@ private final class OPMLParserDelegate: NSObject, XMLParserDelegate {
     ) {
         guard elementName.lowercased() == "outline" else { return }
 
-        if let xmlURLString = attributeDict["xmlUrl"] ?? attributeDict["xmlurl"],
+        let xmlURLString = attributeDict["xmlUrl"] ?? attributeDict["xmlurl"]
+        if let xmlURLString,
            let feedURL = URL(string: xmlURLString),
            seenURLs.insert(URLCanonicalizer.canonicalize(feedURL).absoluteString).inserted {
             let title = attributeDict["title"] ?? attributeDict["text"] ?? feedURL.host() ?? feedURL.absoluteString
@@ -90,8 +92,14 @@ private final class OPMLParserDelegate: NSObject, XMLParserDelegate {
                 category: categoryStack.last,
                 kind: kind
             ))
+            outlinePushedCategoryStack.append(false)
+        } else if xmlURLString != nil {
+            outlinePushedCategoryStack.append(false)
         } else if let text = attributeDict["title"] ?? attributeDict["text"], !text.isEmpty {
             categoryStack.append(text)
+            outlinePushedCategoryStack.append(true)
+        } else {
+            outlinePushedCategoryStack.append(false)
         }
     }
 
@@ -101,9 +109,23 @@ private final class OPMLParserDelegate: NSObject, XMLParserDelegate {
         namespaceURI: String?,
         qualifiedName qName: String?
     ) {
-        if elementName.lowercased() == "outline", !categoryStack.isEmpty {
-            categoryStack.removeLast()
+        guard elementName.lowercased() == "outline",
+              let pushedCategory = outlinePushedCategoryStack.popLast(),
+              pushedCategory,
+              !categoryStack.isEmpty else {
+            return
         }
+        categoryStack.removeLast()
+    }
+
+    func parser(_ parser: XMLParser, parseErrorOccurred parseError: Error) {
+        categoryStack.removeAll()
+        outlinePushedCategoryStack.removeAll()
+    }
+
+    func parser(_ parser: XMLParser, validationErrorOccurred validationError: Error) {
+        categoryStack.removeAll()
+        outlinePushedCategoryStack.removeAll()
     }
 
     private func kind(from type: String?, url: URL) -> SourceKind {

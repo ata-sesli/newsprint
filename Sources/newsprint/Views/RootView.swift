@@ -7,20 +7,17 @@ struct RootView: View {
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \Article.fetchedAt, order: .reverse) private var articles: [Article]
     @Query private var settingsItems: [AppSettings]
+    @StateObject private var viewModel = RootViewModel()
     @State private var selection: SidebarSelection = .inbox
     @State private var selectedArticle: Article?
-    @State private var loadedSources: [Source] = []
-    @State private var refreshTask: Task<Void, Never>?
-    @State private var refreshLoopTask: Task<Void, Never>?
     @State private var searchText = ""
-    @State private var sourceMutationCount = 0
     @AppStorage("newsprint.detailPaneCollapsed") private var detailPaneCollapsed = false
     @FocusState private var searchFocused: Bool
 
     var body: some View {
         PersistentThreePaneSplitView(isDetailCollapsed: $detailPaneCollapsed) {
             NavigationStack {
-                SidebarView(selection: $selection, sources: loadedSources, articles: articles)
+                SidebarView(selection: $selection, sources: viewModel.sources, articles: articles)
             }
             .background(theme.paneBackground)
         } content: {
@@ -37,7 +34,7 @@ struct RootView: View {
             .background(theme.readerBackground)
         }
         .task {
-            ensureSettingsAndRefreshIfNeeded()
+            viewModel.bootstrap(context: modelContext, settings: settingsItems.first)
         }
         .environment(\.newsprintTheme, theme)
         .environment(\.readerFontChoice, readerFontChoice)
@@ -46,6 +43,17 @@ struct RootView: View {
         .preferredColorScheme(theme.colorScheme)
         .tint(theme.tint)
         .background(theme.windowBackground)
+        .overlay(alignment: .bottom) {
+            if let errorMessage = viewModel.errorMessage {
+                Text(errorMessage)
+                    .font(.caption)
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(.red.opacity(0.9), in: Capsule())
+                    .padding(.bottom, 10)
+            }
+        }
         .onChange(of: selectedArticle?.id) {
             if selectedArticle != nil {
                 detailPaneCollapsed = false
@@ -53,10 +61,13 @@ struct RootView: View {
             markSelectedReadOnOpenIfNeeded()
         }
         .onChange(of: settingsItems.first?.refreshWhileOpenMinutes) {
-            startRefreshLoopIfNeeded()
+            viewModel.startRefreshLoop(
+                context: modelContext,
+                minutes: settingsItems.first?.refreshWhileOpenMinutes
+            )
         }
         .onReceive(NotificationCenter.default.publisher(for: .newsprintRefreshAll)) { _ in
-            refreshAll()
+            viewModel.refreshAll(context: modelContext)
         }
         .onReceive(NotificationCenter.default.publisher(for: .newsprintAddSource)) { _ in
             selection = .sources
@@ -65,13 +76,13 @@ struct RootView: View {
             searchFocused = true
         }
         .onReceive(NotificationCenter.default.publisher(for: .newsprintToggleRead)) { _ in
-            saveSelected { $0.isRead.toggle() }
+            saveSelected(.toggleRead)
         }
         .onReceive(NotificationCenter.default.publisher(for: .newsprintToggleStar)) { _ in
-            saveSelected { $0.isStarred.toggle() }
+            saveSelected(.toggleStar)
         }
         .onReceive(NotificationCenter.default.publisher(for: .newsprintToggleHidden)) { _ in
-            saveSelected { $0.isHidden.toggle() }
+            saveSelected(.toggleHidden)
         }
         .onReceive(NotificationCenter.default.publisher(for: .newsprintOpenOriginal)) { _ in
             if let url = selectedArticle?.url {
@@ -88,11 +99,9 @@ struct RootView: View {
         switch selection {
         case .sources:
             SourcesView(
-                sources: loadedSources,
-                refresh: refresh,
-                saveSource: saveSource,
-                deleteSource: deleteSource,
-                sourceChanged: fetchSources
+                sources: viewModel.sources,
+                refresh: { source in viewModel.refresh(source, context: modelContext) },
+                sourceChanged: { viewModel.reloadSources(context: modelContext) }
             )
         case .rules:
             RulesView()
@@ -111,7 +120,7 @@ struct RootView: View {
         if selectedArticle == nil {
             TodaySummaryView(
                 articles: articles,
-                sources: loadedSources,
+                sources: viewModel.sources,
                 selectedArticle: $selectedArticle
             )
         } else {
@@ -157,101 +166,16 @@ struct RootView: View {
         return ArticleSearchService().filter(articles: articles, filter: filter, searchText: searchText)
     }
 
-    private func ensureSettingsAndRefreshIfNeeded() {
-        do {
-            let settings = try SettingsRepository.loadOrCreate(in: modelContext)
-            fetchSources()
-            if settings.refreshOnLaunch {
-                refreshAll()
-            } else {
-                runRetentionCleanup(settings: settings)
-            }
-            startRefreshLoopIfNeeded()
-        } catch {
-            // The UI remains usable even if settings creation fails.
-        }
-    }
-
-    private func refreshAll() {
-        refreshTask?.cancel()
-        refreshTask = Task {
-            await FeedRefreshService(context: modelContext).refreshAll()
-            fetchSources()
-        }
-    }
-
-    private func refresh(_ source: Source) {
-        refreshTask?.cancel()
-        refreshTask = Task {
-            await FeedRefreshService(context: modelContext).refresh(source: source)
-            fetchSources()
-        }
-    }
-
-    @discardableResult
-    private func saveSource(_ source: Source) throws -> Bool {
-        let inserted = try SwiftDataSourceRepository(context: modelContext).saveIfNew(source)
-        sourceMutationCount += 1
-        fetchSources()
-        return inserted
-    }
-
-    private func deleteSource(_ source: Source) throws {
-        try SwiftDataSourceRepository(context: modelContext).delete(source)
-        sourceMutationCount += 1
-        fetchSources()
-    }
-
-    private func fetchSources() {
-        do {
-            loadedSources = try modelContext.fetch(FetchDescriptor<Source>(
-                sortBy: [SortDescriptor(\Source.title)]
-            ))
-        } catch {
-            loadedSources = []
-        }
-    }
-
-    private func startRefreshLoopIfNeeded() {
-        refreshLoopTask?.cancel()
-        guard let minutes = settingsItems.first?.refreshWhileOpenMinutes else {
-            return
-        }
-        refreshLoopTask = Task {
-            while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(minutes * 60))
-                if !Task.isCancelled {
-                    refreshAll()
-                }
-            }
-        }
-    }
-
-    private func runRetentionCleanup(settings: AppSettings) {
-        do {
-            let result = try RetentionEngine().cleanup(
-                context: modelContext,
-                retentionDays: settings.retentionDays
-            )
-            settings.lastRetentionCleanupAt = result.lastCleanupAt
-            settings.lastRetentionDeletedCount = result.deletedCount
-            try modelContext.save()
-        } catch {
-            // Retention errors should not block reading.
-        }
-    }
-
     private func markSelectedReadOnOpenIfNeeded() {
         guard settingsItems.first?.markReadOnOpen == true, let article = selectedArticle, !article.isRead else {
             return
         }
-        saveSelected { $0.isRead = true }
+        viewModel.saveArticleState(article, mutation: .markRead, context: modelContext)
     }
 
-    private func saveSelected(_ change: (Article) -> Void) {
+    private func saveSelected(_ mutation: ArticleStateMutation) {
         guard let selectedArticle else { return }
-        change(selectedArticle)
-        try? modelContext.save()
+        viewModel.saveArticleState(selectedArticle, mutation: mutation, context: modelContext)
     }
 }
 

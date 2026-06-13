@@ -9,6 +9,7 @@ struct ReaderView: View {
     @Environment(\.readerFontChoice) private var readerFontChoice
     @Environment(\.readerFontSize) private var readerFontSize
     let article: Article?
+    @State private var actionErrorMessage: String?
 
     var body: some View {
         Group {
@@ -46,7 +47,19 @@ struct ReaderView: View {
                         .foregroundStyle(.secondary)
 
                         HStack {
-                            ArticleActionButtons(article: article, hackerNewsMetadata: hackerNewsMetadata)
+                            ArticleActionButtons(
+                                article: article,
+                                hackerNewsMetadata: hackerNewsMetadata,
+                                onSaveError: { message in
+                                    actionErrorMessage = message.isEmpty ? nil : message
+                                }
+                            )
+                        }
+
+                        if let actionErrorMessage {
+                            Text(actionErrorMessage)
+                                .font(.caption)
+                                .foregroundStyle(.red)
                         }
 
                         Divider()

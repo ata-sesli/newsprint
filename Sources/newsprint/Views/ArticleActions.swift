@@ -7,19 +7,20 @@ struct ArticleActionButtons: View {
     @Environment(\.modelContext) private var modelContext
     let article: Article
     let hackerNewsMetadata: HackerNewsMetadata?
+    var onSaveError: (String) -> Void = { _ in }
 
     var body: some View {
         Group {
             Button(article.isStarred ? "Unstar" : "Star", systemImage: article.isStarred ? "star.slash" : "star") {
-                save { article.isStarred.toggle() }
+                save(.toggleStar)
             }
 
             Button(article.isRead ? "Mark Unread" : "Mark Read", systemImage: article.isRead ? "circle" : "checkmark.circle") {
-                save { article.isRead.toggle() }
+                save(.toggleRead)
             }
 
             Button(article.isHidden ? "Unhide" : "Hide", systemImage: article.isHidden ? "eye" : "eye.slash") {
-                save { article.isHidden.toggle() }
+                save(.toggleHidden)
             }
 
             Button("Open Original", systemImage: "safari") {
@@ -39,9 +40,18 @@ struct ArticleActionButtons: View {
         }
     }
 
-    private func save(_ change: () -> Void) {
-        change()
-        try? modelContext.save()
+    private func save(_ mutation: ArticleStateMutation) {
+        let snapshot = ArticleStateSnapshot(article: article)
+        do {
+            try mutation.apply(
+                to: article,
+                repository: SwiftDataArticleRepository(context: modelContext)
+            )
+            onSaveError("")
+        } catch {
+            snapshot.restore(article)
+            onSaveError("Could not save article: \(error.localizedDescription)")
+        }
     }
 }
 
@@ -83,4 +93,3 @@ struct HackerNewsStatLabels: View {
         .foregroundStyle(.secondary)
     }
 }
-

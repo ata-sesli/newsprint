@@ -43,7 +43,6 @@ struct SettingsView: View {
 
                 Section("Refresh") {
                     Toggle("Refresh on launch", isOn: binding(settings, \.refreshOnLaunch))
-                    Toggle("Refresh after manual command", isOn: binding(settings, \.refreshOnManualCommand))
                     Toggle("Refresh while app is open", isOn: refreshWhileOpenEnabledBinding(for: settings))
                     if settings.refreshWhileOpenMinutes != nil {
                         Stepper(
@@ -56,7 +55,6 @@ struct SettingsView: View {
                 }
 
                 Section("Reading") {
-                    Toggle("Open links in default browser", isOn: binding(settings, \.openLinksInDefaultBrowser))
                     Toggle("Mark read on open", isOn: binding(settings, \.markReadOnOpen))
                 }
 

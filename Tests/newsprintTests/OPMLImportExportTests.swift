@@ -38,6 +38,42 @@ import Testing
     #expect(preview.sources[0].category == "AI")
 }
 
+@Test func importsSiblingFeedsInFolderWithSameCategory() throws {
+    let data = Data("""
+    <opml version="2.0">
+      <body>
+        <outline text="AI">
+          <outline text="OpenAI" type="rss" xmlUrl="https://openai.com/news/rss.xml"/>
+          <outline text="Anthropic" type="rss" xmlUrl="https://www.anthropic.com/news/rss.xml"/>
+        </outline>
+      </body>
+    </opml>
+    """.utf8)
+
+    let preview = try OPMLImporter().preview(data: data)
+
+    #expect(preview.sources.map(\.category) == ["AI", "AI"])
+}
+
+@Test func importsNestedFolderFeedsWithNearestCategory() throws {
+    let data = Data("""
+    <opml version="2.0">
+      <body>
+        <outline text="Technology">
+          <outline text="Systems">
+            <outline text="Oxide" type="rss" xmlUrl="https://oxide.computer/blog/rss.xml"/>
+          </outline>
+        </outline>
+      </body>
+    </opml>
+    """.utf8)
+
+    let preview = try OPMLImporter().preview(data: data)
+
+    #expect(preview.sources.count == 1)
+    #expect(preview.sources[0].category == "Systems")
+}
+
 @Test func exportsSourcesGroupedByCategory() throws {
     let sources = [
         Source(title: "OpenAI", url: URL(string: "https://openai.com/news/rss.xml")!, siteURL: URL(string: "https://openai.com"), category: "AI"),
@@ -77,4 +113,3 @@ import Testing
     #expect(markdown.contains("- [Worth Saving](https://example.com/save)"))
     #expect(!markdown.contains("Not Starred"))
 }
-

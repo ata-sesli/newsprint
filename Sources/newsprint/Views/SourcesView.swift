@@ -4,45 +4,32 @@ import UniformTypeIdentifiers
 import newsprintCore
 
 struct SourcesView: View {
+    @Environment(\.modelContext) private var modelContext
     let sources: [Source]
     let refresh: (Source) -> Void
-    let saveSource: (Source) throws -> Bool
-    let deleteSource: (Source) throws -> Void
     let sourceChanged: () -> Void
-    @State private var title = ""
-    @State private var urlString = ""
-    @State private var kind: SourceKind = .rss
-    @State private var errorMessage: String?
-    @State private var sourceMessage: String?
-    @State private var discoveredFeeds: [DiscoveredFeed] = []
-    @State private var isDiscovering = false
-    @State private var youtubeChannel = ""
-    @State private var importPreview: OPMLImportPreview?
-    @State private var importMessage: String?
-    @State private var showingImporter = false
-    @State private var showingExporter = false
-    @State private var exportDocument = TextFileDocument()
+    @StateObject private var viewModel = SourcesViewModel()
 
     var body: some View {
         Form {
             Section("Add Source") {
-                TextField("Title", text: $title)
-                TextField("Feed or Website URL", text: $urlString)
-                Picker("Kind", selection: $kind) {
+                TextField("Title", text: $viewModel.title)
+                TextField("Feed or Website URL", text: $viewModel.urlString)
+                Picker("Kind", selection: $viewModel.kind) {
                     ForEach(SourceKind.allCases) { kind in
                         Text(kind.displayName).tag(kind)
                     }
                 }
                 HStack {
-                    Button(isDiscovering ? "Checking..." : "Add Source", systemImage: "plus") {
+                    Button(viewModel.isDiscovering ? "Checking..." : "Add Source", systemImage: "plus") {
                         Task {
-                            await addSource()
+                            await viewModel.addSource(context: modelContext, onSourcesChanged: sourceChanged)
                         }
                     }
-                    .disabled(isDiscovering)
+                    .disabled(viewModel.isDiscovering)
                     .buttonStyle(.borderedProminent)
 
-                    if let errorMessage {
+                    if let errorMessage = viewModel.errorMessage {
                         Text(errorMessage)
                             .foregroundStyle(.red)
                     }
@@ -50,11 +37,11 @@ struct SourcesView: View {
             }
 
             Section("YouTube") {
-                TextField("Channel ID or feed URL", text: $youtubeChannel)
+                TextField("Channel ID or feed URL", text: $viewModel.youtubeChannel)
                 Button("Add YouTube Feed", systemImage: "play.rectangle") {
-                    addYouTubeFeed()
+                    viewModel.addYouTubeFeed(context: modelContext, onSourcesChanged: sourceChanged)
                 }
-                .disabled(youtubeChannel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .disabled(viewModel.youtubeChannel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 .buttonStyle(.bordered)
             }
 
@@ -64,8 +51,18 @@ struct SourcesView: View {
                         SourceRow(
                             source: source,
                             refresh: refresh,
-                            deleteSource: deleteSource,
-                            sourceChanged: sourceChanged
+                            updateTitle: { source, title in
+                                viewModel.updateTitle(source, title: title, context: modelContext, onSourcesChanged: sourceChanged)
+                            },
+                            updateCategory: { source, category in
+                                viewModel.updateCategory(source, category: category, context: modelContext, onSourcesChanged: sourceChanged)
+                            },
+                            updateEnabled: { source, enabled in
+                                viewModel.updateEnabled(source, enabled: enabled, context: modelContext, onSourcesChanged: sourceChanged)
+                            },
+                            deleteSource: { source in
+                                viewModel.deleteSource(source, context: modelContext, onSourcesChanged: sourceChanged)
+                            }
                         )
                     }
                 }
@@ -82,13 +79,13 @@ struct SourcesView: View {
                         }
                         Spacer()
                         Button("Add", systemImage: "plus.circle") {
-                            addPreset(preset)
+                            viewModel.addPreset(preset, context: modelContext, onSourcesChanged: sourceChanged)
                         }
                         .buttonStyle(.borderless)
                     }
                 }
 
-                if let sourceMessage {
+                if let sourceMessage = viewModel.sourceMessage {
                     Text(sourceMessage)
                         .foregroundStyle(.secondary)
                 }
@@ -97,25 +94,25 @@ struct SourcesView: View {
             Section("Import and Export") {
                 HStack {
                     Button("Import OPML", systemImage: "square.and.arrow.down") {
-                        showingImporter = true
+                        viewModel.showingImporter = true
                     }
                     .buttonStyle(.bordered)
 
                     Button("Export OPML", systemImage: "square.and.arrow.up") {
-                        exportOPML()
+                        viewModel.exportOPML(sources: sources)
                     }
                     .buttonStyle(.bordered)
                 }
 
-                if let importMessage {
+                if let importMessage = viewModel.importMessage {
                     Text(importMessage)
                         .foregroundStyle(.secondary)
                 }
             }
 
-            if !discoveredFeeds.isEmpty {
+            if !viewModel.discoveredFeeds.isEmpty {
                 Section("Discovered Feeds") {
-                    ForEach(discoveredFeeds) { feed in
+                    ForEach(viewModel.discoveredFeeds) { feed in
                         HStack {
                             VStack(alignment: .leading) {
                                 Text(feed.title ?? feed.url.host() ?? feed.url.absoluteString)
@@ -132,7 +129,7 @@ struct SourcesView: View {
                                 .foregroundStyle(.secondary)
 
                             Button("Add", systemImage: "plus.circle") {
-                                addDiscoveredFeed(feed)
+                                viewModel.addDiscoveredFeed(feed, context: modelContext, onSourcesChanged: sourceChanged)
                             }
                             .buttonStyle(.borderless)
                         }
@@ -140,7 +137,7 @@ struct SourcesView: View {
                 }
             }
 
-            if let importPreview, !importPreview.sources.isEmpty {
+            if let importPreview = viewModel.importPreview, !importPreview.sources.isEmpty {
                 Section("OPML Preview") {
                     ForEach(importPreview.sources, id: \.feedURL) { source in
                         HStack {
@@ -161,7 +158,7 @@ struct SourcesView: View {
                     }
 
                     Button("Import \(importPreview.sources.count) Sources", systemImage: "tray.and.arrow.down") {
-                        importSources(from: importPreview)
+                        viewModel.importSources(from: importPreview, context: modelContext, onSourcesChanged: sourceChanged)
                     }
                     .buttonStyle(.borderedProminent)
                 }
@@ -170,152 +167,18 @@ struct SourcesView: View {
         }
         .formStyle(.grouped)
         .navigationTitle("Sources")
-        .fileImporter(isPresented: $showingImporter, allowedContentTypes: [.opml, .xml]) { result in
-            importOPML(from: result)
+        .fileImporter(isPresented: $viewModel.showingImporter, allowedContentTypes: [.opml, .xml]) { result in
+            viewModel.importOPML(from: result)
         }
         .fileExporter(
-            isPresented: $showingExporter,
-            document: exportDocument,
+            isPresented: $viewModel.showingExporter,
+            document: viewModel.exportDocument,
             contentType: .opml,
             defaultFilename: "newsprint-sources.opml"
         ) { result in
             if case .failure(let error) = result {
-                errorMessage = error.localizedDescription
+                viewModel.errorMessage = error.localizedDescription
             }
-        }
-    }
-
-    private func addSource() async {
-        let trimmedURL = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let url = URL(string: trimmedURL), url.scheme != nil else {
-            errorMessage = "Enter a valid feed URL."
-            return
-        }
-
-        isDiscovering = true
-        defer { isDiscovering = false }
-
-        do {
-            let result = try await FeedDiscoveryService().discover(from: url)
-            switch result {
-            case .directFeed(let feed):
-                addDiscoveredFeed(feed)
-            case .candidates(let feeds):
-                discoveredFeeds = feeds
-                errorMessage = feeds.isEmpty ? "No feed was found at that URL." : nil
-            }
-        } catch {
-            discoveredFeeds = []
-            errorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
-        }
-    }
-
-    private func addDiscoveredFeed(_ feed: DiscoveredFeed) {
-        let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        let source = Source(
-            title: trimmedTitle.isEmpty ? (feed.title ?? feed.url.host() ?? feed.url.absoluteString) : trimmedTitle,
-            url: feed.url,
-            kind: feed.type.sourceKind
-        )
-
-        do {
-            let inserted = try saveSource(source)
-            errorMessage = inserted ? nil : "That source is already added."
-            sourceMessage = inserted ? "Added \(source.title)." : "Already added: \(source.title)."
-            title = ""
-            urlString = ""
-            kind = .rss
-            discoveredFeeds = []
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-    }
-
-    private func addPreset(_ preset: PresetSource) {
-        let source = Source(
-            title: preset.title,
-            url: preset.url,
-            kind: preset.kind,
-            category: preset.category
-        )
-        saveNewSource(source)
-    }
-
-    private func addYouTubeFeed() {
-        guard let url = PresetSourceCatalog.youtubeFeedURL(from: youtubeChannel) else {
-            errorMessage = "Enter a valid YouTube channel ID or feed URL."
-            return
-        }
-        let source = Source(
-            title: title.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty ?? "YouTube Channel",
-            url: url,
-            kind: .youtube,
-            category: "YouTube"
-        )
-        saveNewSource(source)
-        youtubeChannel = ""
-        title = ""
-    }
-
-    private func saveNewSource(_ source: Source) {
-        do {
-            let inserted = try saveSource(source)
-            errorMessage = inserted ? nil : "That source is already added."
-            sourceMessage = inserted ? "Added \(source.title)." : "Already added: \(source.title)."
-        } catch {
-            errorMessage = error.localizedDescription
-            sourceMessage = nil
-        }
-    }
-
-    private func importOPML(from result: Result<URL, Error>) {
-        do {
-            let url = try result.get()
-            let data = try Data(contentsOf: url)
-            importPreview = try OPMLImporter().preview(data: data)
-            importMessage = "Previewing \(importPreview?.sources.count ?? 0) sources."
-            errorMessage = nil
-        } catch {
-            importPreview = nil
-            errorMessage = error.localizedDescription
-        }
-    }
-
-    private func importSources(from preview: OPMLImportPreview) {
-        var imported = 0
-        var skipped = 0
-        for importedSource in preview.sources {
-            let source = Source(
-                title: importedSource.title,
-                url: importedSource.feedURL,
-                siteURL: importedSource.siteURL,
-                kind: importedSource.kind,
-                category: importedSource.category
-            )
-            do {
-                if try saveSource(source) {
-                    imported += 1
-                } else {
-                    skipped += 1
-                }
-            } catch {
-                errorMessage = error.localizedDescription
-                return
-            }
-        }
-
-        importPreview = nil
-        importMessage = "Imported \(imported), skipped \(skipped) duplicates."
-        errorMessage = nil
-    }
-
-    private func exportOPML() {
-        do {
-            let data = try OPMLExporter().export(sources: sources)
-            exportDocument = TextFileDocument(text: String(data: data, encoding: .utf8) ?? "")
-            showingExporter = true
-        } catch {
-            errorMessage = error.localizedDescription
         }
     }
 }
@@ -331,11 +194,12 @@ private extension DiscoveredFeedType {
 }
 
 private struct SourceRow: View {
-    @Environment(\.modelContext) private var modelContext
     let source: Source
     let refresh: (Source) -> Void
-    let deleteSource: (Source) throws -> Void
-    let sourceChanged: () -> Void
+    let updateTitle: (Source, String) -> Void
+    let updateCategory: (Source, String) -> Void
+    let updateEnabled: (Source, Bool) -> Void
+    let deleteSource: (Source) -> Void
     @State private var isConfirmingDelete = false
 
     var body: some View {
@@ -344,7 +208,7 @@ private struct SourceRow: View {
                 VStack(alignment: .leading) {
                     TextField("Title", text: Binding(
                         get: { source.title },
-                        set: { value in save { source.title = value } }
+                        set: { value in updateTitle(source, value) }
                     ))
                     .font(.headline)
                     Text(source.url.absoluteString)
@@ -357,12 +221,7 @@ private struct SourceRow: View {
 
                 Toggle("Enabled", isOn: Binding(
                     get: { source.enabled },
-                    set: { value in
-                        source.enabled = value
-                        source.updatedAt = Date()
-                        try? modelContext.save()
-                        sourceChanged()
-                    }
+                    set: { value in updateEnabled(source, value) }
                 ))
                 .labelsHidden()
 
@@ -381,7 +240,7 @@ private struct SourceRow: View {
                 Text("Kind: \(source.kind.displayName)")
                 TextField("Category", text: Binding(
                     get: { source.category ?? "" },
-                    set: { value in save { source.category = value.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty } }
+                    set: { value in updateCategory(source, value) }
                 ))
                 .textFieldStyle(.roundedBorder)
                 .frame(maxWidth: 180)
@@ -400,21 +259,8 @@ private struct SourceRow: View {
         .padding(.vertical, 4)
         .confirmationDialog("Delete this source and its articles?", isPresented: $isConfirmingDelete) {
             Button("Delete Source", role: .destructive) {
-                try? deleteSource(source)
+                deleteSource(source)
             }
         }
-    }
-
-    private func save(_ change: () -> Void) {
-        change()
-        source.updatedAt = Date()
-        try? modelContext.save()
-        sourceChanged()
-    }
-}
-
-private extension String {
-    var nilIfEmpty: String? {
-        isEmpty ? nil : self
     }
 }

@@ -5,18 +5,23 @@ import newsprintCore
 
 @main
 struct NewsprintApp: App {
-    private let modelContainer: ModelContainer
+    private let startupState: StartupState
 
     init() {
-        modelContainer = Self.makeModelContainer()
+        startupState = Self.makeStartupState()
         configureDockIcon()
     }
 
     var body: some Scene {
         WindowGroup {
-            RootView()
+            switch startupState {
+            case .ready(let modelContainer):
+                RootView()
+                    .modelContainer(modelContainer)
+            case .failed(let message, let storeURL):
+                StartupErrorView(message: message, storeURL: storeURL)
+            }
         }
-        .modelContainer(modelContainer)
         .commands {
             CommandGroup(after: .newItem) {
                 Button("Add Source") {
@@ -75,7 +80,8 @@ struct NewsprintApp: App {
         NSApplication.shared.applicationIconImage = image
     }
 
-    private static func makeModelContainer() -> ModelContainer {
+    private static func makeStartupState() -> StartupState {
+        let storeURL = storeURL()
         do {
             let schema = Schema([
                 Source.self,
@@ -83,21 +89,56 @@ struct NewsprintApp: App {
                 AppSettings.self,
                 FilterRule.self
             ])
-            let applicationSupportURL = FileManager.default.urls(
-                for: .applicationSupportDirectory,
-                in: .userDomainMask
-            )[0]
-            let storeDirectory = applicationSupportURL.appending(path: "newsprint")
-            try FileManager.default.createDirectory(at: storeDirectory, withIntermediateDirectories: true)
+            try FileManager.default.createDirectory(
+                at: storeURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
 
             let configuration = ModelConfiguration(
                 schema: schema,
-                url: storeDirectory.appending(path: "newsprint.store")
+                url: storeURL
             )
-            return try ModelContainer(for: schema, configurations: [configuration])
+            return .ready(try ModelContainer(for: schema, configurations: [configuration]))
         } catch {
-            fatalError("Could not create Newsprint model container: \(error)")
+            return .failed(
+                message: "Could not open the Newsprint database: \(error.localizedDescription)",
+                storeURL: storeURL
+            )
         }
+    }
+
+    private static func storeURL() -> URL {
+        FileManager.default.urls(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask
+        )[0]
+        .appending(path: "newsprint/newsprint.store")
+    }
+}
+
+enum StartupState {
+    case ready(ModelContainer)
+    case failed(message: String, storeURL: URL)
+}
+
+struct StartupErrorView: View {
+    let message: String
+    let storeURL: URL
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Label("Newsprint Could Not Start", systemImage: "exclamationmark.triangle")
+                .font(.title2.weight(.semibold))
+            Text(message)
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+            Text(storeURL.path)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+        }
+        .padding(28)
+        .frame(minWidth: 520, minHeight: 220, alignment: .leading)
     }
 }
 
