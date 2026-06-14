@@ -68,6 +68,8 @@ cat > "$CONTENTS_DIR/Info.plist" <<'PLIST'
 	<string>__BUILD_NUMBER__</string>
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.news</string>
+	<key>LSUIElement</key>
+	<true/>
 	<key>LSMinimumSystemVersion</key>
 	<string>14.0</string>
 	<key>NSHighResolutionCapable</key>

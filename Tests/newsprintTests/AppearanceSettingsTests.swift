@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import newsprintCore
 
@@ -9,7 +10,20 @@ import Testing
     #expect(settings.readerFontSize == 17)
     #expect(settings.articleListDensity == .comfortable)
     #expect(settings.webPreviewHorizontalPadding == 8)
+    #expect(settings.refreshWhileOpenMinutes == 60)
     #expect(ArticleListDensity.newspaper.displayName == "Newspaper")
+}
+
+@Test func releaseBuildScriptConfiguresMenuBarAgent() throws {
+    let testFile = URL(fileURLWithPath: #filePath)
+    let packageRoot = testFile
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+    let script = try String(contentsOf: packageRoot.appending(path: "scripts/build-release-app.sh"), encoding: .utf8)
+
+    #expect(script.contains("<key>LSUIElement</key>"))
+    #expect(script.contains("<true/>"))
 }
 
 @Test func appSettingsAppearanceFallsBackForInvalidRawValues() {

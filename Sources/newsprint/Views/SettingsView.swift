@@ -83,18 +83,13 @@ struct SettingsView: View {
             }
 
             SettingsSection("Refresh") {
-                AdminFieldRow("Refresh on launch") {
-                    Toggle("", isOn: binding(settings, \.refreshOnLaunch))
-                        .labelsHidden()
-                }
-
-                AdminFieldRow("Refresh while app is open") {
+                AdminFieldRow("Background refresh", caption: "Refreshes while Newsprint stays in the menu bar.") {
                     Toggle("", isOn: refreshWhileOpenEnabledBinding(for: settings))
                         .labelsHidden()
                 }
 
                 if settings.refreshWhileOpenMinutes != nil {
-                    AdminFieldRow("Refresh interval", caption: "Every \(settings.refreshWhileOpenMinutes ?? 30) minutes") {
+                    AdminFieldRow("Refresh interval", caption: "Every \(settings.refreshWhileOpenMinutes ?? 60) minutes") {
                         Stepper("", value: refreshIntervalBinding(for: settings), in: 5...240, step: 5)
                             .labelsHidden()
                     }
@@ -251,7 +246,7 @@ struct SettingsView: View {
         Binding(
             get: { settings.refreshWhileOpenMinutes != nil },
             set: { enabled in
-                settings.refreshWhileOpenMinutes = enabled ? 30 : nil
+                settings.refreshWhileOpenMinutes = enabled ? 60 : nil
                 saveSettings()
             }
         )
@@ -259,7 +254,7 @@ struct SettingsView: View {
 
     private func refreshIntervalBinding(for settings: AppSettings) -> Binding<Int> {
         Binding(
-            get: { settings.refreshWhileOpenMinutes ?? 30 },
+            get: { settings.refreshWhileOpenMinutes ?? 60 },
             set: { value in
                 settings.refreshWhileOpenMinutes = min(max(value, 5), 240)
                 saveSettings()

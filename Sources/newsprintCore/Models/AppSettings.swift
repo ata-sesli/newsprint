@@ -33,7 +33,7 @@ public final class AppSettings {
     public init(
         retentionDays: Int = 7,
         refreshOnLaunch: Bool = true,
-        refreshWhileOpenMinutes: Int? = nil,
+        refreshWhileOpenMinutes: Int? = 60,
         markReadOnOpen: Bool = false,
         lastRetentionCleanupAt: Date? = nil,
         lastRetentionDeletedCount: Int = 0,

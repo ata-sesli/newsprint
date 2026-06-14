@@ -5,6 +5,7 @@ import newsprintCore
 
 struct RootView: View {
     @Environment(\.modelContext) private var modelContext
+    @EnvironmentObject private var agentController: NewsprintAgentController
     @Query private var settingsItems: [AppSettings]
     @StateObject private var viewModel = RootViewModel()
     @StateObject private var feedStore = ArticleFeedStore()
@@ -19,6 +20,11 @@ struct RootView: View {
     @FocusState private var searchFocused: Bool
 
     var body: some View {
+        let base = AnyView(rootLayout)
+        return configuredRootLayout(base)
+    }
+
+    private var rootLayout: some View {
         PersistentTwoPaneSplitView {
             NavigationStack {
                 SidebarView(selection: $selection, sources: viewModel.sources, tagNames: feedStore.tagNames)
@@ -30,48 +36,34 @@ struct RootView: View {
             }
             .background(theme.paneBackground)
         }
-        .task {
-            viewModel.bootstrap(
-                context: modelContext,
-                settings: settingsItems.first,
-                onDataChanged: { reloadFeedAfterBulkChange() }
-            )
-            reloadFeed()
-            NewsprintLog.startup.info("Tag load scheduled after 1.0s")
-            try? await Task.sleep(for: .seconds(1))
-            guard !Task.isCancelled else { return }
-            feedStore.refreshTagNames(context: modelContext)
-        }
-        .environment(\.newsprintTheme, theme)
-        .environment(\.readerFontChoice, readerFontChoice)
-        .environment(\.readerFontSize, readerFontSize)
-        .environment(\.articleListDensity, articleListDensity)
-        .environment(\.webPreviewHorizontalPadding, webPreviewHorizontalPadding)
-        .preferredColorScheme(theme.colorScheme)
-        .tint(theme.tint)
-        .background(theme.windowBackground)
-        .overlay(alignment: .bottom) {
-            if let errorMessage = viewModel.errorMessage {
-                Text(errorMessage)
-                    .font(.caption)
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(.red.opacity(0.9), in: Capsule())
-                    .padding(.bottom, 10)
-            }
-        }
-        .onChange(of: expandedArticleID) {
+    }
+
+    private func configuredRootLayout(_ base: AnyView) -> AnyView {
+        var view = AnyView(base.task {
+            await bootstrapDashboard()
+        })
+
+        view = AnyView(view.modifier(RootAppearanceModifier(
+            theme: theme,
+            readerFontChoice: readerFontChoice,
+            readerFontSize: readerFontSize,
+            articleListDensity: articleListDensity,
+            webPreviewHorizontalPadding: webPreviewHorizontalPadding
+        )))
+
+        view = AnyView(view.overlay(alignment: .bottom) {
+            errorOverlay
+        })
+
+        view = AnyView(view.onChange(of: expandedArticleID) {
             markExpandedReadOnOpenIfNeeded()
-        }
-        .onChange(of: settingsItems.first?.refreshWhileOpenMinutes) {
-            viewModel.startRefreshLoop(
-                context: modelContext,
-                minutes: settingsItems.first?.refreshWhileOpenMinutes,
-                onDataChanged: { reloadFeedAfterBulkChange() }
-            )
-        }
-        .onChange(of: selection) {
+        })
+
+        view = AnyView(view.onChange(of: settingsItems.first?.refreshWhileOpenMinutes) {
+            agentController.updateRefreshInterval(minutes: settingsItems.first?.refreshWhileOpenMinutes)
+        })
+
+        view = AnyView(view.onChange(of: selection) {
             expandedArticleID = nil
             focusedArticleID = nil
             if selection.isArticleFeedSelection {
@@ -79,48 +71,111 @@ struct RootView: View {
             } else {
                 previewArticleID = nil
             }
-        }
-        .onChange(of: searchText) {
+        })
+
+        view = AnyView(view.onChange(of: searchText) {
             expandedArticleID = nil
             if selection.isArticleFeedSelection {
                 reloadFeed()
             }
-        }
-        .onChange(of: feedSort) {
+        })
+
+        view = AnyView(view.onChange(of: feedSort) {
             expandedArticleID = nil
             if selection.isArticleFeedSelection {
                 reloadFeed()
             }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .newsprintRefreshAll)) { _ in
-            refreshAll()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .newsprintAddSource)) { _ in
+        })
+
+        view = AnyView(view.onReceive(NotificationCenter.default.publisher(for: .newsprintDataChanged)) { _ in
+            viewModel.reloadSources(context: modelContext)
+            reloadFeedAfterBulkChange()
+        })
+
+        view = AnyView(view.onReceive(NotificationCenter.default.publisher(for: .newsprintRefreshAll)) { _ in
+            agentController.refreshAll()
+        })
+
+        view = AnyView(view.onReceive(NotificationCenter.default.publisher(for: .newsprintAddSource)) { _ in
             selection = .sources
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .newsprintFocusSearch)) { _ in
+        })
+
+        view = AnyView(view.onReceive(NotificationCenter.default.publisher(for: .newsprintFocusSearch)) { _ in
             searchFocused = true
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .newsprintToggleRead)) { _ in
+        })
+
+        view = AnyView(view.onReceive(NotificationCenter.default.publisher(for: .newsprintToggleRead)) { _ in
             saveSelected(.toggleRead)
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .newsprintToggleStar)) { _ in
+        })
+
+        view = AnyView(view.onReceive(NotificationCenter.default.publisher(for: .newsprintToggleStar)) { _ in
             saveSelected(.toggleStar)
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .newsprintToggleHidden)) { _ in
+        })
+
+        view = AnyView(view.onReceive(NotificationCenter.default.publisher(for: .newsprintToggleHidden)) { _ in
             saveSelected(.toggleHidden)
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .newsprintOpenOriginal)) { _ in
+        })
+
+        view = AnyView(view.onReceive(NotificationCenter.default.publisher(for: .newsprintOpenOriginal)) { _ in
             if let url = actionArticle?.url {
                 NSWorkspace.shared.open(url)
             }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .newsprintTogglePreviewPane)) { _ in
+        })
+
+        view = AnyView(view.onReceive(NotificationCenter.default.publisher(for: .newsprintTogglePreviewPane)) { _ in
             isPreviewCollapsed.toggle()
             if !isPreviewCollapsed, previewArticleID == nil {
                 previewArticleID = actionArticle?.id
             }
+        })
+
+        return view
+    }
+
+    private struct RootAppearanceModifier: ViewModifier {
+        let theme: NewsprintTheme
+        let readerFontChoice: ReaderFontChoice
+        let readerFontSize: Int
+        let articleListDensity: ArticleListDensity
+        let webPreviewHorizontalPadding: Int
+
+        func body(content: Content) -> some View {
+            content
+                .environment(\.newsprintTheme, theme)
+                .environment(\.readerFontChoice, readerFontChoice)
+                .environment(\.readerFontSize, readerFontSize)
+                .environment(\.articleListDensity, articleListDensity)
+                .environment(\.webPreviewHorizontalPadding, webPreviewHorizontalPadding)
+                .preferredColorScheme(theme.colorScheme)
+                .tint(theme.tint)
+                .background(theme.windowBackground)
         }
+    }
+
+    @ViewBuilder
+    private var errorOverlay: some View {
+        if let errorMessage = viewModel.errorMessage {
+            Text(errorMessage)
+                .font(.caption)
+                .foregroundStyle(.white)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(.red.opacity(0.9), in: Capsule())
+                .padding(.bottom, 10)
+        }
+    }
+
+    private func bootstrapDashboard() async {
+        viewModel.bootstrap(
+            context: modelContext,
+            settings: settingsItems.first,
+            onDataChanged: { reloadFeedAfterBulkChange() }
+        )
+        reloadFeed()
+        NewsprintLog.startup.info("Tag load scheduled after 1.0s")
+        try? await Task.sleep(for: .seconds(1))
+        guard !Task.isCancelled else { return }
+        feedStore.refreshTagNames(context: modelContext)
     }
 
     @ViewBuilder
@@ -257,10 +312,6 @@ struct RootView: View {
 
     private func reloadFeed() {
         feedStore.reloadIfNeeded(context: modelContext, filter: activeFilter, searchText: searchText, sort: feedSort)
-    }
-
-    private func refreshAll() {
-        viewModel.refreshAll(context: modelContext, onDataChanged: { reloadFeedAfterBulkChange() })
     }
 
     private func reloadFeedAfterBulkChange() {

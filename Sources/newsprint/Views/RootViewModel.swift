@@ -9,8 +9,6 @@ final class RootViewModel: ObservableObject {
 
     private var didBootstrap = false
     private var refreshTask: Task<Void, Never>?
-    private var refreshOnLaunchTask: Task<Void, Never>?
-    private var refreshLoopTask: Task<Void, Never>?
 
     func bootstrap(context: ModelContext, settings: AppSettings?, onDataChanged: @escaping () -> Void = {}) {
         guard !didBootstrap else {
@@ -25,20 +23,14 @@ final class RootViewModel: ObservableObject {
             timing.markAndLog("Settings load")
             reloadSources(context: context)
             timing.markAndLog("Source load")
-            if loadedSettings.refreshOnLaunch {
-                scheduleRefreshOnLaunch(context: context, onDataChanged: onDataChanged)
-            } else {
-                runRetentionCleanup(context: context, settings: loadedSettings)
-                onDataChanged()
-            }
-            startRefreshLoop(context: context, minutes: loadedSettings.refreshWhileOpenMinutes, onDataChanged: onDataChanged)
+            runRetentionCleanup(context: context, settings: loadedSettings)
+            onDataChanged()
         } catch {
             errorMessage = "Could not load app data: \(error.localizedDescription)"
         }
     }
 
     func refreshAll(context: ModelContext, onDataChanged: @escaping () -> Void = {}) {
-        refreshOnLaunchTask?.cancel()
         refreshTask?.cancel()
         refreshTask = Task { @MainActor in
             await FeedRefreshService(context: context).refreshAll()
@@ -48,26 +40,9 @@ final class RootViewModel: ObservableObject {
     }
 
     func refresh(_ source: Source, context: ModelContext, onDataChanged: @escaping () -> Void = {}) {
-        refreshOnLaunchTask?.cancel()
         refreshTask?.cancel()
         refreshTask = Task { @MainActor in
             await FeedRefreshService(context: context).refresh(source: source)
-            reloadSources(context: context)
-            onDataChanged()
-        }
-    }
-
-    private func scheduleRefreshOnLaunch(context: ModelContext, onDataChanged: @escaping () -> Void) {
-        refreshOnLaunchTask?.cancel()
-        NewsprintLog.startup.info("Refresh on launch scheduled after 3.0s")
-        refreshOnLaunchTask = Task { @MainActor in
-            try? await Task.sleep(for: .seconds(3))
-            guard !Task.isCancelled else { return }
-
-            let timing = StartupTimingRecorder()
-            NewsprintLog.startup.info("Refresh on launch started")
-            await FeedRefreshService(context: context).refreshAll()
-            timing.markAndLog("Refresh on launch finished")
             reloadSources(context: context)
             onDataChanged()
         }
@@ -98,20 +73,6 @@ final class RootViewModel: ObservableObject {
             snapshot.restore(article)
             errorMessage = "Could not save article: \(error.localizedDescription)"
             return false
-        }
-    }
-
-    func startRefreshLoop(context: ModelContext, minutes: Int?, onDataChanged: @escaping () -> Void = {}) {
-        refreshLoopTask?.cancel()
-        guard let minutes else { return }
-
-        refreshLoopTask = Task { @MainActor in
-            while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(minutes * 60))
-                if !Task.isCancelled {
-                    refreshAll(context: context, onDataChanged: onDataChanged)
-                }
-            }
         }
     }
 
