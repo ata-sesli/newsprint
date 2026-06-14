@@ -7,13 +7,13 @@ import newsprintCore
 struct NewsprintApp: App {
     @NSApplicationDelegateAdaptor(NewsprintAppDelegate.self) private var appDelegate
     private let startupState: StartupState
-    private let agentController: NewsprintAgentController
+    @StateObject private var agentController: NewsprintAgentController
     private let dashboardController: NewsprintDashboardController
 
     @MainActor
     init() {
         let agentController = NewsprintAgentController()
-        self.agentController = agentController
+        _agentController = StateObject(wrappedValue: agentController)
         startupState = Self.makeStartupState()
         dashboardController = NewsprintDashboardController(
             startupState: startupState,
@@ -27,7 +27,7 @@ struct NewsprintApp: App {
 
     @SceneBuilder
     var body: some Scene {
-        MenuBarExtra("Newsprint", systemImage: "newspaper") {
+        MenuBarExtra("Newsprint", systemImage: agentController.effectiveMenuBarSystemImage) {
             NewsprintMenuBarView(
                 startupState: startupState,
                 agentController: agentController,

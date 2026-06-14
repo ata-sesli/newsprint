@@ -62,3 +62,37 @@ import Testing
     settings.clampWebPreviewHorizontalPadding(8)
     #expect(settings.webPreviewHorizontalPadding == 8)
 }
+
+@Test func menuBarIconChoiceDefaultsAndFallsBackToNewspaper() {
+    #expect(MenuBarIconChoice.defaultChoice == .newspaper)
+    #expect(MenuBarIconChoice(storedRawValue: nil) == .newspaper)
+    #expect(MenuBarIconChoice(storedRawValue: "not-a-symbol") == .newspaper)
+    #expect(MenuBarIconChoice(storedRawValue: "terminal.fill") == .terminal)
+    #expect(MenuBarIconChoice.newspaper.systemImage == "newspaper.fill")
+}
+
+@Test func menuBarIconResolverUsesDynamicStatusOverrides() {
+    #expect(
+        MenuBarIconResolver.effectiveSystemImage(
+            baseIconRawValue: "terminal.fill",
+            isRefreshing: true,
+            hasSyncError: true
+        ) == "arrow.clockwise"
+    )
+
+    #expect(
+        MenuBarIconResolver.effectiveSystemImage(
+            baseIconRawValue: "terminal.fill",
+            isRefreshing: false,
+            hasSyncError: true
+        ) == "exclamationmark.triangle.fill"
+    )
+
+    #expect(
+        MenuBarIconResolver.effectiveSystemImage(
+            baseIconRawValue: "terminal.fill",
+            isRefreshing: false,
+            hasSyncError: false
+        ) == "terminal.fill"
+    )
+}

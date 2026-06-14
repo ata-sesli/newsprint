@@ -6,6 +6,7 @@ import newsprintCore
 struct SettingsView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.newsprintTheme) private var theme
+    @EnvironmentObject private var agentController: NewsprintAgentController
     @Query private var settingsItems: [AppSettings]
     @Query(sort: \Article.fetchedAt, order: .reverse) private var articles: [Article]
     @State private var errorMessage: String?
@@ -48,6 +49,16 @@ struct SettingsView: View {
                     Picker("", selection: themeBinding(for: settings)) {
                         ForEach(AppThemeChoice.allCases, id: \.self) { theme in
                             Text(theme.displayName).tag(theme)
+                        }
+                    }
+                    .labelsHidden()
+                }
+
+                AdminFieldRow("Menu bar icon") {
+                    Picker("", selection: menuBarIconBinding) {
+                        ForEach(MenuBarIconChoice.allCases, id: \.self) { icon in
+                            Label(icon.displayName, systemImage: icon.systemImage)
+                                .tag(icon.rawValue)
                         }
                     }
                     .labelsHidden()
@@ -170,6 +181,13 @@ struct SettingsView: View {
     private var databaseLocation: URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
             .appending(path: "newsprint/newsprint.store") ?? URL(fileURLWithPath: "~/Library/Application Support/newsprint/newsprint.store")
+    }
+
+    private var menuBarIconBinding: Binding<String> {
+        Binding(
+            get: { agentController.menuBarIconRawValue },
+            set: { agentController.updateMenuBarIcon(rawValue: $0) }
+        )
     }
 
     private func retentionBinding(for settings: AppSettings) -> Binding<Int> {

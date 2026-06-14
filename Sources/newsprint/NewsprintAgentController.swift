@@ -8,10 +8,17 @@ final class NewsprintAgentController: ObservableObject {
     @Published private(set) var isRefreshing = false
     @Published private(set) var statusMessage: String?
     @Published private(set) var backgroundRefreshMinutes: Int?
+    @Published private(set) var menuBarIconRawValue: String
 
     private var modelContext: ModelContext?
     private var refreshLoopTask: Task<Void, Never>?
     private var didBootstrap = false
+
+    init() {
+        menuBarIconRawValue = MenuBarIconChoice(
+            storedRawValue: UserDefaults.standard.string(forKey: MenuBarIconChoice.storageKey)
+        ).rawValue
+    }
 
     deinit {
         refreshLoopTask?.cancel()
@@ -70,6 +77,20 @@ final class NewsprintAgentController: ObservableObject {
 
     func updateRefreshInterval(minutes: Int?) {
         startBackgroundRefresh(minutes: minutes)
+    }
+
+    func updateMenuBarIcon(rawValue: String) {
+        let icon = MenuBarIconChoice(storedRawValue: rawValue)
+        menuBarIconRawValue = icon.rawValue
+        UserDefaults.standard.set(icon.rawValue, forKey: MenuBarIconChoice.storageKey)
+    }
+
+    var effectiveMenuBarSystemImage: String {
+        MenuBarIconResolver.effectiveSystemImage(
+            baseIconRawValue: menuBarIconRawValue,
+            isRefreshing: isRefreshing,
+            hasSyncError: statusMessage != nil && !isRefreshing
+        )
     }
 
     var lastRefreshText: String {
