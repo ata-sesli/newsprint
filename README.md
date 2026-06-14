@@ -19,11 +19,11 @@ Newsprint is not a social feed, cloud reader, recommendation engine, or account-
 
 ## Screenshots
 
-### Feed with Reader Preview
+### Cloudflare Engineering Article in Reader Mode
 
 ![Newsprint feed with Reader preview](ss-reader-cf.png)
 
-### GitHub Engineering Article in Reader Mode
+### GitHub Repository in Reader Mode
 
 ![Newsprint Reader Mode showing a GitHub Engineering article](ss-reader-gh.png)
 
