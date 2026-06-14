@@ -455,6 +455,31 @@ log stream --predicate 'subsystem == "Newsprint" && category == "startup"' --inf
 - macOS 14 or newer.
 - Swift 6.1 toolchain.
 
+### Install with Homebrew
+
+```sh
+brew tap ata-sesli/newsprint
+brew install --cask newsprint
+```
+
+Upgrade:
+
+```sh
+brew upgrade --cask newsprint
+```
+
+Uninstall:
+
+```sh
+brew uninstall --cask newsprint
+```
+
+Remove the app and local Newsprint data:
+
+```sh
+brew uninstall --cask --zap newsprint
+```
+
 ### Run Tests
 
 ```sh
@@ -559,4 +584,3 @@ Newsprint currently does not implement:
 - Full-text search index.
 - External YouTube API lookup.
 - Browser extension or Safari/Chrome profile sharing.
-

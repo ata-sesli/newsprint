@@ -15,6 +15,7 @@ MACOS_DIR="$CONTENTS_DIR/MacOS"
 RESOURCES_DIR="$CONTENTS_DIR/Resources"
 ICON_SOURCE="$ROOT_DIR/Assets/newsprint-logo.png"
 ICONSET_DIR="$ROOT_DIR/dist/build/AppIcon.iconset"
+APP_VERSION="${APP_VERSION:-1.0.0}"
 BUILD_NUMBER="${BUILD_NUMBER:-$(date +%Y%m%d%H%M%S)}"
 
 if [[ ! -f "$ICON_SOURCE" ]]; then
@@ -63,7 +64,7 @@ cat > "$CONTENTS_DIR/Info.plist" <<'PLIST'
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.1.0</string>
+	<string>__APP_VERSION__</string>
 	<key>CFBundleVersion</key>
 	<string>__BUILD_NUMBER__</string>
 	<key>LSApplicationCategoryType</key>
@@ -81,6 +82,7 @@ cat > "$CONTENTS_DIR/Info.plist" <<'PLIST'
 </dict>
 </plist>
 PLIST
+perl -0pi -e "s/__APP_VERSION__/$APP_VERSION/g" "$CONTENTS_DIR/Info.plist"
 perl -0pi -e "s/__BUILD_NUMBER__/$BUILD_NUMBER/g" "$CONTENTS_DIR/Info.plist"
 
 printf 'APPL????' > "$CONTENTS_DIR/PkgInfo"
