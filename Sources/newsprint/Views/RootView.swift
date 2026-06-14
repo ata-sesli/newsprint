@@ -37,6 +37,9 @@ struct RootView: View {
                 onDataChanged: { reloadFeedAfterBulkChange() }
             )
             reloadFeed()
+            NewsprintLog.startup.info("Tag load scheduled after 1.0s")
+            try? await Task.sleep(for: .seconds(1))
+            guard !Task.isCancelled else { return }
             feedStore.refreshTagNames(context: modelContext)
         }
         .environment(\.newsprintTheme, theme)

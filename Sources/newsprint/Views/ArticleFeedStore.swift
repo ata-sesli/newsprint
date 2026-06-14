@@ -45,6 +45,7 @@ final class ArticleFeedStore: ObservableObject {
         isLoading = true
 
         do {
+            let timing = StartupTimingRecorder()
             let repository = SwiftDataArticleFeedRepository(context: context)
             let page = try repository.fetchPage(
                 filter: filter,
@@ -53,11 +54,13 @@ final class ArticleFeedStore: ObservableObject {
                 limit: Self.pageSize,
                 sort: selectedSort
             )
+            timing.markAndLog("First feed page fetch")
             guard generation == loadGeneration else { return }
             articles = page
             offset = page.count
             hasMore = page.count == Self.pageSize
             counts = try repository.fetchCounts()
+            timing.markAndLog("Count fetch")
             hasLoadedPage = true
             bulkReloadGeneration += 1
             isLoading = false
@@ -80,6 +83,7 @@ final class ArticleFeedStore: ObservableObject {
 
         isLoading = true
         do {
+            let timing = StartupTimingRecorder()
             let repository = SwiftDataArticleFeedRepository(context: context)
             let nextPage = try repository.fetchPage(
                 filter: currentFilter,
@@ -88,6 +92,7 @@ final class ArticleFeedStore: ObservableObject {
                 limit: Self.pageSize,
                 sort: currentSort
             )
+            timing.markAndLog("Additional feed page fetch")
             articles.append(contentsOf: nextPage)
             offset += nextPage.count
             hasMore = nextPage.count == Self.pageSize
@@ -125,7 +130,9 @@ final class ArticleFeedStore: ObservableObject {
 
     func refreshTagNames(context: ModelContext) {
         do {
+            let timing = StartupTimingRecorder()
             tagNames = try SwiftDataArticleFeedRepository(context: context).fetchTagNames()
+            timing.markAndLog("Tag fetch")
         } catch {
             tagNames = []
         }

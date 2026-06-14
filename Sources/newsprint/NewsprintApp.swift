@@ -5,6 +5,7 @@ import newsprintCore
 
 @main
 struct NewsprintApp: App {
+    @NSApplicationDelegateAdaptor(NewsprintAppDelegate.self) private var appDelegate
     private let startupState: StartupState
 
     init() {
@@ -81,6 +82,7 @@ struct NewsprintApp: App {
     }
 
     private static func makeStartupState() -> StartupState {
+        let timing = StartupTimingRecorder()
         let storeURL = storeURL()
         do {
             let schema = Schema([
@@ -98,8 +100,11 @@ struct NewsprintApp: App {
                 schema: schema,
                 url: storeURL
             )
-            return .ready(try ModelContainer(for: schema, configurations: [configuration]))
+            let container = try ModelContainer(for: schema, configurations: [configuration])
+            timing.markAndLog("Model container creation")
+            return .ready(container)
         } catch {
+            timing.markAndLog("Model container creation failed")
             return .failed(
                 message: "Could not open the Newsprint database: \(error.localizedDescription)",
                 storeURL: storeURL
@@ -113,6 +118,41 @@ struct NewsprintApp: App {
             in: .userDomainMask
         )[0]
         .appending(path: "newsprint/newsprint.store")
+    }
+}
+
+@MainActor
+final class NewsprintAppDelegate: NSObject, NSApplicationDelegate {
+    private var didMaximizeInitialWindow = false
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(windowDidBecomeKey(_:)),
+            name: NSWindow.didBecomeKeyNotification,
+            object: nil
+        )
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            self?.maximizeInitialWindow()
+        }
+    }
+
+    @objc private func windowDidBecomeKey(_ notification: Notification) {
+        maximizeInitialWindow(window: notification.object as? NSWindow)
+    }
+
+    private func maximizeInitialWindow(window explicitWindow: NSWindow? = nil) {
+        guard !didMaximizeInitialWindow else { return }
+        guard let window = explicitWindow ?? NSApp.keyWindow ?? NSApp.mainWindow ?? NSApp.windows.first(where: { $0.isVisible }) else {
+            return
+        }
+
+        didMaximizeInitialWindow = true
+        DispatchQueue.main.async {
+            guard let screen = window.screen ?? NSScreen.main else { return }
+            window.setFrame(screen.visibleFrame, display: true)
+        }
     }
 }
 

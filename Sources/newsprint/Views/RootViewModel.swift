@@ -9,6 +9,7 @@ final class RootViewModel: ObservableObject {
 
     private var didBootstrap = false
     private var refreshTask: Task<Void, Never>?
+    private var refreshOnLaunchTask: Task<Void, Never>?
     private var refreshLoopTask: Task<Void, Never>?
 
     func bootstrap(context: ModelContext, settings: AppSettings?, onDataChanged: @escaping () -> Void = {}) {
@@ -19,10 +20,13 @@ final class RootViewModel: ObservableObject {
         didBootstrap = true
 
         do {
+            let timing = StartupTimingRecorder()
             let loadedSettings = try settings ?? SettingsRepository.loadOrCreate(in: context)
+            timing.markAndLog("Settings load")
             reloadSources(context: context)
+            timing.markAndLog("Source load")
             if loadedSettings.refreshOnLaunch {
-                refreshAll(context: context, onDataChanged: onDataChanged)
+                scheduleRefreshOnLaunch(context: context, onDataChanged: onDataChanged)
             } else {
                 runRetentionCleanup(context: context, settings: loadedSettings)
                 onDataChanged()
@@ -34,6 +38,7 @@ final class RootViewModel: ObservableObject {
     }
 
     func refreshAll(context: ModelContext, onDataChanged: @escaping () -> Void = {}) {
+        refreshOnLaunchTask?.cancel()
         refreshTask?.cancel()
         refreshTask = Task { @MainActor in
             await FeedRefreshService(context: context).refreshAll()
@@ -43,9 +48,26 @@ final class RootViewModel: ObservableObject {
     }
 
     func refresh(_ source: Source, context: ModelContext, onDataChanged: @escaping () -> Void = {}) {
+        refreshOnLaunchTask?.cancel()
         refreshTask?.cancel()
         refreshTask = Task { @MainActor in
             await FeedRefreshService(context: context).refresh(source: source)
+            reloadSources(context: context)
+            onDataChanged()
+        }
+    }
+
+    private func scheduleRefreshOnLaunch(context: ModelContext, onDataChanged: @escaping () -> Void) {
+        refreshOnLaunchTask?.cancel()
+        NewsprintLog.startup.info("Refresh on launch scheduled after 3.0s")
+        refreshOnLaunchTask = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(3))
+            guard !Task.isCancelled else { return }
+
+            let timing = StartupTimingRecorder()
+            NewsprintLog.startup.info("Refresh on launch started")
+            await FeedRefreshService(context: context).refreshAll()
+            timing.markAndLog("Refresh on launch finished")
             reloadSources(context: context)
             onDataChanged()
         }

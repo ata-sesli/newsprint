@@ -188,6 +188,20 @@ import Testing
     #expect(sanitized.contains("<p>After image.</p>"))
 }
 
+@Test func readerHTMLSanitizerPreservesPreformattedCodeNewlines() {
+    let html = """
+    <article>
+      <pre><code>let first = 1
+    let second = 2
+    print(first + second)</code></pre>
+    </article>
+    """
+
+    let sanitized = ArticleReaderHTMLSanitizer.sanitize(html, baseURL: URL(string: "https://example.com/post")!)
+
+    #expect(sanitized.contains("let first = 1\nlet second = 2\nprint(first + second)"))
+}
+
 @Test func readerPolicyDoesNotPreferHackerNewsMetadataAsLocalArticle() {
     let article = Article(
         id: "hn-local",

@@ -20,6 +20,7 @@ struct ArticleFeedView: View {
     @Binding var previewArticleID: String?
     @Binding var previewMode: PreviewMode
     @Binding var isPreviewCollapsed: Bool
+    @State private var didLogFirstAppearance = false
     let reloadGeneration: Int
     let onNearEnd: (Int) -> Void
     let onArticleAction: (Article, ArticleStateMutation) -> Void
@@ -35,6 +36,11 @@ struct ArticleFeedView: View {
             )
         }
         .navigationTitle("Feed")
+        .onAppear {
+            guard !didLogFirstAppearance else { return }
+            didLogFirstAppearance = true
+            NewsprintLog.startup.info("First feed view appeared")
+        }
     }
 
     private var feedContent: some View {

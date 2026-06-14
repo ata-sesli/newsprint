@@ -2,6 +2,7 @@ import Foundation
 import OSLog
 
 public enum NewsprintLog {
+    public static let startup = Logger(subsystem: "Newsprint", category: "startup")
     public static let feed = Logger(subsystem: "Newsprint", category: "feed")
     public static let discovery = Logger(subsystem: "Newsprint", category: "discovery")
     public static let rules = Logger(subsystem: "Newsprint", category: "rules")
@@ -41,4 +42,3 @@ public enum SourceErrorFormatter {
         return (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
     }
 }
-

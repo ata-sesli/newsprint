@@ -330,7 +330,8 @@ enum ReaderHTMLDocumentBuilder {
         }
         pre {
           overflow-x: auto;
-          white-space: pre;
+          white-space: pre-wrap;
+          overflow-wrap: anywhere;
           background: var(--surface);
           border: 1px solid var(--separator);
           border-radius: 8px;
@@ -343,7 +344,7 @@ enum ReaderHTMLDocumentBuilder {
           font-size: 0.82em;
         }
         pre code {
-          white-space: pre;
+          white-space: pre-wrap;
           font-size: 0.82rem;
           line-height: 1.45;
         }
