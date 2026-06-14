@@ -149,8 +149,6 @@ final class ArticleFeedCollectionCoordinator: NSObject, NSCollectionViewDataSour
             collectionView.collectionViewLayout?.invalidateLayout()
             return
         }
-
-        collectionView.reloadData()
     }
 
     func numberOfSections(in collectionView: NSCollectionView) -> Int {

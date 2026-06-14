@@ -11,6 +11,7 @@ final class ArticleFeedStore: ObservableObject {
     @Published private(set) var counts = FeedCounts()
     @Published private(set) var tagNames: [String] = []
     @Published private(set) var isLoading = false
+    @Published private(set) var hasLoadedInitialPage = false
     @Published private(set) var hasMore = true
     @Published private(set) var offset = 0
     @Published private(set) var bulkReloadGeneration = 0
@@ -43,6 +44,9 @@ final class ArticleFeedStore: ObservableObject {
         loadGeneration += 1
         let generation = loadGeneration
         isLoading = true
+        if articles.isEmpty {
+            hasLoadedInitialPage = false
+        }
 
         do {
             let timing = StartupTimingRecorder()
@@ -62,6 +66,7 @@ final class ArticleFeedStore: ObservableObject {
             counts = try repository.fetchCounts()
             timing.markAndLog("Count fetch")
             hasLoadedPage = true
+            hasLoadedInitialPage = true
             bulkReloadGeneration += 1
             isLoading = false
         } catch {
@@ -70,6 +75,7 @@ final class ArticleFeedStore: ObservableObject {
             offset = 0
             hasMore = false
             hasLoadedPage = true
+            hasLoadedInitialPage = true
             isLoading = false
         }
     }

@@ -152,6 +152,8 @@ struct RootView: View {
                 searchFocused: $searchFocused,
                 expandedArticleID: $expandedArticleID,
                 focusedArticleID: $focusedArticleID,
+                isLoading: feedStore.isLoading,
+                hasLoadedInitialPage: feedStore.hasLoadedInitialPage,
                 previewArticle: previewArticle,
                 previewArticleID: $previewArticleID,
                 previewMode: previewModeBinding,

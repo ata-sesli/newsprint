@@ -16,6 +16,8 @@ struct ArticleFeedView: View {
     var searchFocused: FocusState<Bool>.Binding
     @Binding var expandedArticleID: String?
     @Binding var focusedArticleID: String?
+    let isLoading: Bool
+    let hasLoadedInitialPage: Bool
     let previewArticle: Article?
     @Binding var previewArticleID: String?
     @Binding var previewMode: PreviewMode
@@ -61,24 +63,30 @@ struct ArticleFeedView: View {
 
             Divider()
 
-            ArticleFeedCollectionView(
-                items: itemModels,
-                reloadGeneration: reloadGeneration,
-                onToggleExpanded: { article in
-                    focusedArticleID = article.id
-                    expandedArticleID = expandedArticleID == article.id ? nil : article.id
-                },
-                onOpenInPreview: { article in
-                    focusedArticleID = article.id
-                    previewArticleID = article.id
-                    isPreviewCollapsed = false
-                },
-                onNearEnd: onNearEnd,
-                onArticleAction: onArticleAction
-            )
-            .overlay {
-                if articles.isEmpty {
-                    ContentUnavailableView("No Articles", systemImage: "newspaper", description: Text("Add a source and refresh to read locally."))
+            ZStack {
+                if showsInitialLoadingState {
+                    FeedLoadingPlaceholder()
+                } else {
+                    ArticleFeedCollectionView(
+                        items: itemModels,
+                        reloadGeneration: reloadGeneration,
+                        onToggleExpanded: { article in
+                            focusedArticleID = article.id
+                            expandedArticleID = expandedArticleID == article.id ? nil : article.id
+                        },
+                        onOpenInPreview: { article in
+                            focusedArticleID = article.id
+                            previewArticleID = article.id
+                            isPreviewCollapsed = false
+                        },
+                        onNearEnd: onNearEnd,
+                        onArticleAction: onArticleAction
+                    )
+                    .overlay {
+                        if showsEmptyState {
+                            ContentUnavailableView("No Articles", systemImage: "newspaper", description: Text("Add a source and refresh to read locally."))
+                        }
+                    }
                 }
             }
             .background(theme.paneBackground)
@@ -99,6 +107,59 @@ struct ArticleFeedView: View {
                 density: density
             )
         }
+    }
+
+    private var showsInitialLoadingState: Bool {
+        !hasLoadedInitialPage && articles.isEmpty
+    }
+
+    private var showsEmptyState: Bool {
+        hasLoadedInitialPage && !isLoading && articles.isEmpty
+    }
+}
+
+private struct FeedLoadingPlaceholder: View {
+    @Environment(\.newsprintTheme) private var theme
+    @Environment(\.articleListDensity) private var density
+
+    var body: some View {
+        ScrollView {
+            LazyVStack(spacing: density.rowVerticalPadding + 10) {
+                ForEach(0..<5, id: \.self) { index in
+                    VStack(alignment: .leading, spacing: 18) {
+                        HStack(spacing: 10) {
+                            RoundedRectangle(cornerRadius: 5)
+                                .fill(theme.tint.opacity(0.30))
+                                .frame(width: 42, height: 28)
+                            RoundedRectangle(cornerRadius: 4)
+                                .fill(theme.metadata.opacity(0.18))
+                                .frame(width: CGFloat(230 + (index % 2) * 80), height: 16)
+                            Spacer()
+                        }
+
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(theme.metadata.opacity(0.20))
+                            .frame(height: 34)
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(theme.metadata.opacity(0.14))
+                            .frame(width: 520, height: 26)
+                    }
+                    .padding(density.cardPadding)
+                    .frame(maxWidth: .infinity, minHeight: 170, alignment: .leading)
+                    .background(theme.readerSurface, in: RoundedRectangle(cornerRadius: density.cardCornerRadius))
+                    .overlay(alignment: .leading) {
+                        RoundedRectangle(cornerRadius: 2)
+                            .fill(theme.rowAccent.opacity(0.55))
+                            .frame(width: 3)
+                            .padding(.vertical, density.cardPadding)
+                    }
+                    .opacity(0.72)
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 18)
+        }
+        .disabled(true)
     }
 }
 

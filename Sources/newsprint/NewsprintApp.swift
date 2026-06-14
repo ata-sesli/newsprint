@@ -23,6 +23,7 @@ struct NewsprintApp: App {
                 StartupErrorView(message: message, storeURL: storeURL)
             }
         }
+        .defaultSize(width: 1800, height: 1100)
         .commands {
             CommandGroup(after: .newItem) {
                 Button("Add Source") {
