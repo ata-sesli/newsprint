@@ -2,13 +2,19 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-APP_VERSION="${APP_VERSION:-1.0.0}"
+APP_VERSION="${1:-${APP_VERSION:-1.0.0}}"
 APP_DIR="$ROOT_DIR/dist/Newsprint.app"
 ZIP_PATH="$ROOT_DIR/dist/Newsprint-${APP_VERSION}.zip"
 CASK_PATH="$ROOT_DIR/packaging/homebrew/Casks/newsprint.rb"
 RELEASE_URL="https://github.com/ata-sesli/newsprint/releases/new?tag=v${APP_VERSION}"
 
 cd "$ROOT_DIR"
+
+if [[ ! "$APP_VERSION" =~ ^[0-9]+[.][0-9]+[.][0-9]+$ ]]; then
+  echo "Usage: scripts/package-release.sh <version>" >&2
+  echo "Example: scripts/package-release.sh 1.0.1" >&2
+  exit 1
+fi
 
 echo "Building Newsprint ${APP_VERSION}..."
 APP_VERSION="$APP_VERSION" scripts/build-release-app.sh
@@ -30,6 +36,7 @@ fi
 SHA256="$(shasum -a 256 "$ZIP_PATH" | awk '{print $1}')"
 
 if [[ -f "$CASK_PATH" ]]; then
+  perl -0pi -e "s/(version \")[^\"]+(\")/\${1}$APP_VERSION\${2}/" "$CASK_PATH"
   perl -0pi -e "s/(sha256 \")[0-9a-f]{64}(\")/\${1}$SHA256\${2}/" "$CASK_PATH"
 fi
 

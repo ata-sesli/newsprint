@@ -1,6 +1,6 @@
 cask "newsprint" do
   version "1.0.0"
-  sha256 "20b8b844306909491926688dac2ba235d49e236615e96e76d5ee0ec288abbebe"
+  sha256 "efbe2498c563972a016de471dc0982aa4564c6cb7ae988fcbeb90ab10971a269"
 
   url "https://github.com/ata-sesli/newsprint/releases/download/v#{version}/Newsprint-#{version}.zip"
   name "Newsprint"

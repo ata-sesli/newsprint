@@ -71,12 +71,60 @@ import SwiftData
     #expect(ids == ["other", "same"])
 }
 
-private func makeRepositoryArticle(id: String) -> Article {
+@MainActor
+@Test func repositoryDeleteNonStarredArticlesPreservesStarredArticles() throws {
+    let container = try ModelContainer(
+        for: Source.self, Article.self, AppSettings.self,
+        configurations: ModelConfiguration(isStoredInMemoryOnly: true)
+    )
+    let context = container.mainContext
+    let repository = SwiftDataArticleRepository(context: context)
+
+    try repository.insert(makeRepositoryArticle(id: "read", isRead: true))
+    try repository.insert(makeRepositoryArticle(id: "hidden", isHidden: true))
+    try repository.insert(makeRepositoryArticle(id: "unread"))
+    try repository.insert(makeRepositoryArticle(id: "starred", isStarred: true, isHidden: true))
+
+    let result = try repository.deleteNonStarredArticles()
+
+    let remaining = try context.fetch(FetchDescriptor<Article>()).map(\.id)
+    #expect(result.deletedCount == 3)
+    #expect(remaining == ["starred"])
+}
+
+@MainActor
+@Test func repositoryDeleteNonStarredArticlesReportsZeroWhenOnlyStarredExist() throws {
+    let container = try ModelContainer(
+        for: Source.self, Article.self, AppSettings.self,
+        configurations: ModelConfiguration(isStoredInMemoryOnly: true)
+    )
+    let context = container.mainContext
+    let repository = SwiftDataArticleRepository(context: context)
+
+    try repository.insert(makeRepositoryArticle(id: "starred-one", isStarred: true))
+    try repository.insert(makeRepositoryArticle(id: "starred-two", isStarred: true))
+
+    let result = try repository.deleteNonStarredArticles()
+
+    let remaining = try context.fetch(FetchDescriptor<Article>()).map(\.id).sorted()
+    #expect(result.deletedCount == 0)
+    #expect(remaining == ["starred-one", "starred-two"])
+}
+
+private func makeRepositoryArticle(
+    id: String,
+    isRead: Bool = false,
+    isStarred: Bool = false,
+    isHidden: Bool = false
+) -> Article {
     Article(
         id: id,
         sourceID: UUID(uuidString: "00000000-0000-0000-0000-000000000004")!,
         sourceTitle: "Example",
         title: id,
-        url: URL(string: "https://example.com/\(id)")!
+        url: URL(string: "https://example.com/\(id)")!,
+        isRead: isRead,
+        isStarred: isStarred,
+        isHidden: isHidden
     )
 }

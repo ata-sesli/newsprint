@@ -4,6 +4,54 @@ import Testing
 @testable import newsprintCore
 
 @MainActor
+@Test func ruleDefinitionSnapshotsFilterRuleFields() throws {
+    let createdAt = Date(timeIntervalSince1970: 1_700_000_000)
+    let rule = FilterRule(
+        id: UUID(uuidString: "00000000-0000-0000-0000-000000000111")!,
+        name: "Boost Swift",
+        target: .title,
+        matchMode: .contains,
+        pattern: "swift",
+        action: .boost,
+        actionValue: "5",
+        enabled: false,
+        priority: 7,
+        createdAt: createdAt
+    )
+
+    let definition = RuleDefinition(rule: rule)
+
+    #expect(definition.id == rule.id)
+    #expect(definition.target == .title)
+    #expect(definition.matchMode == .contains)
+    #expect(definition.pattern == "swift")
+    #expect(definition.action == .boost)
+    #expect(definition.actionValue == "5")
+    #expect(definition.enabled == false)
+    #expect(definition.priority == 7)
+    #expect(definition.createdAt == createdAt)
+}
+
+@MainActor
+@Test func ruleDefinitionApplicationMatchesFilterRuleApplication() throws {
+    let draft = makeRuleDraft(title: "SwiftData RSS reader", contentText: "Local-first Swift app")
+    let rule = FilterRule(
+        name: "Tag Swift",
+        target: .title,
+        matchMode: .contains,
+        pattern: "swift",
+        action: .tag,
+        actionValue: "Swift",
+        priority: 1
+    )
+
+    let modelResult = RuleEngine().apply(rules: [rule], to: draft)
+    let definitionResult = RuleEngine().apply(rules: [RuleDefinition(rule: rule)], to: draft)
+
+    #expect(definitionResult == modelResult)
+}
+
+@MainActor
 @Test func ruleEngineAppliesActionsInPriorityOrder() throws {
     let draft = makeRuleDraft(
         title: "SwiftData RSS reader",

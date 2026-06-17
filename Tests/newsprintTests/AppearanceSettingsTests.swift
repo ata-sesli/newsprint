@@ -26,6 +26,17 @@ import Testing
     #expect(script.contains("<true/>"))
 }
 
+@Test func appLaunchOpensDashboardWindow() throws {
+    let testFile = URL(fileURLWithPath: #filePath)
+    let packageRoot = testFile
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+    let appSource = try String(contentsOf: packageRoot.appending(path: "Sources/newsprint/NewsprintApp.swift"), encoding: .utf8)
+
+    #expect(appSource.contains("dashboardController?.openDashboardOnLaunch()"))
+}
+
 @Test func appSettingsAppearanceFallsBackForInvalidRawValues() {
     let settings = AppSettings()
     settings.themeRawValue = "unexpected-theme"
