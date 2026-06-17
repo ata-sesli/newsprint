@@ -20,8 +20,9 @@ struct ArticleFeedView: View {
     let isLoading: Bool
     let isPreparingFeed: Bool
     let isRefreshing: Bool
+    let isActive: Bool
     let hasLoadedInitialPage: Bool
-    let previewArticle: Article?
+    let previewArticle: ArticleFeedDisplayItem?
     @Binding var previewArticleID: String?
     @Binding var previewMode: PreviewMode
     @Binding var isPreviewCollapsed: Bool
@@ -32,7 +33,7 @@ struct ArticleFeedView: View {
     let cleanHome: () -> Void
     let applyPendingRefresh: () -> Void
     let dismissPendingRefresh: () -> Void
-    let onArticleAction: (Article, ArticleStateMutation) -> Void
+    let onArticleAction: (String, ArticleStateMutation) -> Void
 
     var body: some View {
         ArticleReadingSplitView(isPreviewCollapsed: $isPreviewCollapsed) {
@@ -80,16 +81,24 @@ struct ArticleFeedView: View {
                     FeedLoadingPlaceholder()
                 } else {
                     ArticleFeedCollectionView(
-                        items: itemModels,
+                        items: displayItems,
+                        expandedArticleID: expandedArticleID,
+                        appearance: ArticleFeedAppearance(
+                            theme: theme,
+                            readerFontChoice: readerFontChoice,
+                            readerFontSize: readerFontSize,
+                            density: density
+                        ),
+                        isActive: isActive,
                         reloadGeneration: reloadGeneration,
                         edgeResetGeneration: edgeResetGeneration,
-                        onToggleExpanded: { article in
-                            focusedArticleID = article.id
-                            expandedArticleID = expandedArticleID == article.id ? nil : article.id
+                        onToggleExpanded: { item in
+                            focusedArticleID = item.id
+                            expandedArticleID = expandedArticleID == item.id ? nil : item.id
                         },
-                        onOpenInPreview: { article in
-                            focusedArticleID = article.id
-                            previewArticleID = article.id
+                        onOpenInPreview: { item in
+                            focusedArticleID = item.id
+                            previewArticleID = item.id
                             isPreviewCollapsed = false
                         },
                         onNearEnd: onNearEnd,
@@ -105,19 +114,6 @@ struct ArticleFeedView: View {
             .background(theme.paneBackground)
         }
         .background(theme.paneBackground)
-    }
-
-    private var itemModels: [ArticleFeedItemModel] {
-        displayItems.map { displayItem in
-            ArticleFeedItemModel(
-                displayItem: displayItem,
-                isExpanded: expandedArticleID == displayItem.id,
-                theme: theme,
-                readerFontChoice: readerFontChoice,
-                readerFontSize: readerFontSize,
-                density: density
-            )
-        }
     }
 
     private var showsInitialLoadingState: Bool {
@@ -179,14 +175,14 @@ struct ArticleFeedCard: View {
     @Environment(\.readerFontChoice) private var readerFontChoice
     @Environment(\.readerFontSize) private var readerFontSize
     @Environment(\.articleListDensity) private var density
-    let article: Article
+    let article: ArticleFeedDisplayItem
     let isExpanded: Bool
     let hackerNewsMetadata: HackerNewsMetadata?
     let metadataText: String
     let previewText: String?
     let onToggleExpanded: () -> Void
     let onOpenInPreview: () -> Void
-    let onArticleAction: (Article, ArticleStateMutation) -> Void
+    let onArticleAction: (String, ArticleStateMutation) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: density.rowSpacing) {
@@ -234,7 +230,34 @@ struct ArticleFeedCard: View {
         .contentShape(RoundedRectangle(cornerRadius: density.cardCornerRadius))
         .onTapGesture(perform: onToggleExpanded)
         .contextMenu {
-            ArticleContextMenu(article: article, hackerNewsMetadata: hackerNewsMetadata)
+            Button(article.isStarred ? "Unstar" : "Star", systemImage: article.isStarred ? "star.slash" : "star") {
+                onArticleAction(article.id, .toggleStar)
+            }
+
+            Button(article.isRead ? "Mark Unread" : "Mark Read", systemImage: article.isRead ? "circle" : "checkmark.circle") {
+                onArticleAction(article.id, .toggleRead)
+            }
+
+            Button(article.isHidden ? "Unhide" : "Hide", systemImage: article.isHidden ? "eye" : "eye.slash") {
+                onArticleAction(article.id, .toggleHidden)
+            }
+
+            Divider()
+
+            Button("Open Original", systemImage: "safari") {
+                NSWorkspace.shared.open(article.previewURL)
+            }
+
+            if let threadURL = hackerNewsMetadata?.threadURL {
+                Button("Open HN Thread", systemImage: "bubble.left.and.bubble.right") {
+                    NSWorkspace.shared.open(threadURL)
+                }
+            }
+
+            Button("Copy Link", systemImage: "link") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(article.previewURL.absoluteString, forType: .string)
+            }
         }
     }
 
@@ -315,19 +338,19 @@ struct ArticleFeedCard: View {
     private var expandedActions: some View {
         HStack {
             Button(article.isStarred ? "Unstar" : "Star", systemImage: article.isStarred ? "star.slash" : "star") {
-                onArticleAction(article, .toggleStar)
+                    onArticleAction(article.id, .toggleStar)
             }
 
             Button(article.isRead ? "Mark Unread" : "Mark Read", systemImage: article.isRead ? "circle" : "checkmark.circle") {
-                onArticleAction(article, .toggleRead)
+                    onArticleAction(article.id, .toggleRead)
             }
 
             Button(article.isHidden ? "Unhide" : "Hide", systemImage: article.isHidden ? "eye" : "eye.slash") {
-                onArticleAction(article, .toggleHidden)
+                    onArticleAction(article.id, .toggleHidden)
             }
 
             Button("Open Original", systemImage: "safari") {
-                NSWorkspace.shared.open(article.url)
+                NSWorkspace.shared.open(article.previewURL)
             }
 
             if let threadURL = hackerNewsMetadata?.threadURL {
@@ -338,7 +361,7 @@ struct ArticleFeedCard: View {
 
             Button("Copy Link", systemImage: "link") {
                 NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(article.url.absoluteString, forType: .string)
+                NSPasteboard.general.setString(article.previewURL.absoluteString, forType: .string)
             }
         }
     }
@@ -349,7 +372,7 @@ struct ExpandedArticleContent: View {
     @Environment(\.readerFontChoice) private var readerFontChoice
     @Environment(\.readerFontSize) private var readerFontSize
     @Environment(\.articleListDensity) private var density
-    let article: Article
+    let article: ArticleFeedDisplayItem
     let hackerNewsMetadata: HackerNewsMetadata?
 
     var body: some View {
@@ -375,7 +398,14 @@ struct ExpandedArticleContent: View {
         guard hackerNewsMetadata == nil else {
             return nil
         }
-        return HTMLTextExtractor.text(fromHTML: article.contentText ?? article.excerpt)?.nilIfBlank
+        guard let bodyText = HTMLTextExtractor.text(fromHTML: article.contentText ?? article.excerpt)?.nilIfBlank else {
+            return nil
+        }
+        if let previewText = article.previewText?.nilIfBlank,
+           bodyText.normalizedArticleText == previewText.normalizedArticleText {
+            return nil
+        }
+        return bodyText
     }
 
     private func authorCommentBlock(_ text: String) -> some View {
@@ -845,5 +875,11 @@ private extension String {
     var nilIfBlank: String? {
         let value = trimmingCharacters(in: .whitespacesAndNewlines)
         return value.isEmpty ? nil : value
+    }
+
+    var normalizedArticleText: String {
+        components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
     }
 }

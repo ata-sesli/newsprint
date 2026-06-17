@@ -39,8 +39,23 @@ final class RootViewModel: ObservableObject {
         }
     }
 
+    func noteSourceInserted(_ source: Source) {
+        guard !sources.contains(where: { $0.id == source.id }) else {
+            return
+        }
+        sources.append(source)
+        sources.sort {
+            $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending
+        }
+        errorMessage = nil
+    }
+
     @discardableResult
-    func saveArticleState(_ article: Article, mutation: ArticleStateMutation, context: ModelContext) -> Bool {
+    func saveArticleState(articleID: String, mutation: ArticleStateMutation, context: ModelContext) -> ArticleFeedSnapshotMutation? {
+        guard let article = article(id: articleID, context: context) else {
+            errorMessage = "Could not save article: article not found."
+            return nil
+        }
         let snapshot = ArticleStateSnapshot(article: article)
         do {
             try mutation.apply(
@@ -48,11 +63,25 @@ final class RootViewModel: ObservableObject {
                 repository: SwiftDataArticleRepository(context: context)
             )
             errorMessage = nil
-            return true
+            return ArticleFeedSnapshotMutation(
+                isRead: article.isRead,
+                isStarred: article.isStarred,
+                isHidden: article.isHidden
+            )
         } catch {
             snapshot.restore(article)
             errorMessage = "Could not save article: \(error.localizedDescription)"
-            return false
+            return nil
         }
+    }
+
+    private func article(id articleID: String, context: ModelContext) -> Article? {
+        var descriptor = FetchDescriptor<Article>(
+            predicate: #Predicate<Article> { article in
+                article.id == articleID
+            }
+        )
+        descriptor.fetchLimit = 1
+        return try? context.fetch(descriptor).first
     }
 }

@@ -10,6 +10,7 @@ final class NewsprintAgentController: ObservableObject {
     @Published private(set) var backgroundRefreshMinutes: Int?
     @Published private(set) var menuBarIconRawValue: String
 
+    private(set) var modelContainer: ModelContainer?
     private var modelContext: ModelContext?
     private var refreshActor: FeedRefreshActor?
     private var refreshLoopTask: Task<Void, Never>?
@@ -30,6 +31,7 @@ final class NewsprintAgentController: ObservableObject {
         didBootstrap = true
 
         let context = ModelContext(container)
+        modelContainer = container
         modelContext = context
         refreshActor = FeedRefreshActor(modelContainer: container)
 

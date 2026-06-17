@@ -2,71 +2,21 @@ import AppKit
 import Foundation
 import newsprintCore
 
-struct ArticleFeedDisplayItem: Identifiable {
-    let article: Article
-    let hackerNewsMetadata: HackerNewsMetadata?
-    let metadataText: String
-    let previewText: String?
+typealias ArticleFeedDisplayItem = ArticleFeedSnapshot
 
-    var id: String {
-        article.id
-    }
-
-    init(article: Article) {
-        self.article = article
-        self.hackerNewsMetadata = HackerNewsMetadata(text: article.contentText ?? article.excerpt)
-        self.metadataText = Self.metadataText(for: article)
-        if self.hackerNewsMetadata == nil {
-            self.previewText = HTMLTextExtractor.text(fromHTML: article.contentText ?? article.excerpt)?
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-                .nilIfEmpty
-        } else {
-            self.previewText = nil
-        }
-    }
-
-    private static func metadataText(for article: Article) -> String {
-        var parts = [article.sourceTitle]
-        if let author = article.author, !author.isEmpty {
-            parts.append(author)
-        }
-        parts.append((article.publishedAt ?? article.fetchedAt).formatted(date: .abbreviated, time: .shortened))
-        return parts.joined(separator: " · ")
-    }
-}
-
-private extension String {
-    var nilIfEmpty: String? {
-        isEmpty ? nil : self
-    }
-}
-
-struct ArticleFeedItemModel: Identifiable {
-    let displayItem: ArticleFeedDisplayItem
-    let isExpanded: Bool
+struct ArticleFeedAppearance: Equatable {
     let theme: NewsprintTheme
     let readerFontChoice: ReaderFontChoice
     let readerFontSize: Int
     let density: ArticleListDensity
 
-    var article: Article {
-        displayItem.article
-    }
-
-    var hackerNewsMetadata: HackerNewsMetadata? {
-        displayItem.hackerNewsMetadata
-    }
-
-    var metadataText: String {
-        displayItem.metadataText
-    }
-
-    var previewText: String? {
-        displayItem.previewText
-    }
-
-    var id: String {
-        article.id
+    var key: String {
+        [
+            theme.choice.rawValue,
+            readerFontChoice.rawValue,
+            "\(readerFontSize)",
+            density.rawValue
+        ].joined(separator: "|")
     }
 }
 
@@ -100,16 +50,16 @@ final class ArticleFeedHeightCache {
     }
 }
 
-extension ArticleFeedItemModel {
-    func heightCacheKey(width: CGFloat) -> ArticleFeedHeightCacheKey {
+extension ArticleFeedDisplayItem {
+    func heightCacheKey(width: CGFloat, appearance: ArticleFeedAppearance) -> ArticleFeedHeightCacheKey {
         ArticleFeedHeightCacheKey(
             articleID: id,
-            isExpanded: isExpanded,
+            isExpanded: true,
             width: Int(width.rounded()),
-            themeRawValue: theme.choice.rawValue,
-            readerFontRawValue: readerFontChoice.rawValue,
-            readerFontSize: readerFontSize,
-            densityRawValue: density.rawValue
+            themeRawValue: appearance.theme.choice.rawValue,
+            readerFontRawValue: appearance.readerFontChoice.rawValue,
+            readerFontSize: appearance.readerFontSize,
+            densityRawValue: appearance.density.rawValue
         )
     }
 }

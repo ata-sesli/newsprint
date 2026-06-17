@@ -73,20 +73,22 @@ public struct SourcesSelectionState: Equatable, Sendable {
 }
 
 public enum SourceDisplayItemBuilder {
+    public static func sourceRow(for source: Source) -> SourceRowDisplayItem {
+        SourceRowDisplayItem(
+            id: source.id,
+            title: source.title,
+            urlString: source.url.absoluteString,
+            kindTitle: source.kind.displayName,
+            category: source.category?.nilIfEmpty,
+            successText: "Success: \(source.lastSuccessfulFetchAt?.formatted(date: .abbreviated, time: .shortened) ?? "Never")",
+            errorMessage: source.lastErrorMessage,
+            iconName: iconName(for: source.kind),
+            enabled: source.enabled
+        )
+    }
+
     public static func sourceRows(for sources: [Source]) -> [SourceRowDisplayItem] {
-        sources.map { source in
-            SourceRowDisplayItem(
-                id: source.id,
-                title: source.title,
-                urlString: source.url.absoluteString,
-                kindTitle: source.kind.displayName,
-                category: source.category?.nilIfEmpty,
-                successText: "Success: \(source.lastSuccessfulFetchAt?.formatted(date: .abbreviated, time: .shortened) ?? "Never")",
-                errorMessage: source.lastErrorMessage,
-                iconName: iconName(for: source.kind),
-                enabled: source.enabled
-            )
-        }
+        sources.map(sourceRow(for:))
     }
 
     public static func presetRows(
@@ -108,6 +110,26 @@ public enum SourceDisplayItemBuilder {
                     isAdded: addedURLs.contains(canonicalURLString)
                 )
             }
+    }
+
+    public static func markPresetAdded(
+        canonicalURLString: String,
+        in rows: [PresetRowDisplayItem]
+    ) -> [PresetRowDisplayItem] {
+        rows.map { row in
+            guard row.canonicalURLString == canonicalURLString else {
+                return row
+            }
+            return PresetRowDisplayItem(
+                id: row.id,
+                preset: row.preset,
+                title: row.title,
+                iconName: row.iconName,
+                tags: row.tags,
+                canonicalURLString: row.canonicalURLString,
+                isAdded: true
+            )
+        }
     }
 
     private static func iconName(for kind: SourceKind) -> String {

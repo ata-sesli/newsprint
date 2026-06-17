@@ -17,7 +17,7 @@ final class ArticlePreviewViewModel: ObservableObject {
     private let fetcher = ReadableArticleFetcher()
     private let extractor = ReadableArticleExtractor()
 
-    func load(article: Article?) async {
+    func load(article: ArticleFeedDisplayItem?) async {
         guard let article, let url = ArticlePreviewTarget.url(for: article) else {
             currentArticleID = nil
             state = .idle
@@ -63,7 +63,7 @@ final class ArticlePreviewViewModel: ObservableObject {
         state = .idle
     }
 
-    private func fallbackArticle(from article: Article, url: URL) -> ReadableArticle? {
+    private func fallbackArticle(from article: ArticleFeedDisplayItem, url: URL) -> ReadableArticle? {
         guard let text = HTMLTextExtractor.text(fromHTML: article.contentText ?? article.excerpt), text.nilIfBlank != nil else {
             return nil
         }
@@ -77,7 +77,7 @@ final class ArticlePreviewViewModel: ObservableObject {
         )
     }
 
-    private func readmeArticle(from article: Article, readmeURL: URL, markdown: String) -> ReadableArticle {
+    private func readmeArticle(from article: ArticleFeedDisplayItem, readmeURL: URL, markdown: String) -> ReadableArticle {
         let text = markdown.trimmingCharacters(in: .whitespacesAndNewlines)
         return ReadableArticle(
             title: "\(article.title) README",
@@ -94,7 +94,7 @@ struct ArticlePreviewPane: View {
     @Environment(\.newsprintTheme) private var theme
     @Environment(\.readerFontChoice) private var readerFontChoice
     @Environment(\.readerFontSize) private var readerFontSize
-    let article: Article?
+    let article: ArticleFeedDisplayItem?
     @Binding var previewMode: PreviewMode
     @Binding var isCollapsed: Bool
     @StateObject private var viewModel = ArticlePreviewViewModel()

@@ -210,6 +210,10 @@ public enum ArticlePreviewTarget {
     public static func url(for article: Article) -> URL? {
         HackerNewsMetadata(text: article.contentText ?? article.excerpt)?.articleURL ?? article.url
     }
+
+    public static func url(for article: ArticleFeedSnapshot) -> URL? {
+        article.hackerNewsMetadata?.articleURL ?? article.url
+    }
 }
 
 public enum ArticleReaderContentPolicy {
@@ -261,6 +265,42 @@ public enum ArticleReaderContentPolicy {
         }
 
         return URL(string: "https://raw.githubusercontent.com/\(components[0])/\(components[1])/HEAD/README.md")
+    }
+
+    public static func localReadableArticle(for article: ArticleFeedSnapshot, minimumTextLength: Int = 500) -> ReadableArticle? {
+        guard article.hackerNewsMetadata == nil else {
+            return nil
+        }
+
+        let targetURL = ArticlePreviewTarget.url(for: article) ?? article.url
+        if let contentHTML = article.contentHTML {
+            let sanitized = ArticleReaderHTMLSanitizer.sanitize(contentHTML, baseURL: targetURL)
+            if let text = HTMLTextExtractor.text(fromHTML: Optional(sanitized)), text.count >= minimumTextLength {
+                return ReadableArticle(
+                    title: article.title,
+                    byline: article.author,
+                    siteName: article.sourceTitle,
+                    url: targetURL,
+                    html: sanitized,
+                    text: text
+                )
+            }
+        }
+
+        guard let rawText = article.contentText ?? article.excerpt,
+              let text = HTMLTextExtractor.textPreservingParagraphBreaks(fromHTML: rawText),
+              text.count >= minimumTextLength else {
+            return nil
+        }
+
+        return ReadableArticle(
+            title: article.title,
+            byline: article.author,
+            siteName: article.sourceTitle,
+            url: targetURL,
+            html: ArticleReaderHTMLSanitizer.paragraphHTML(fromPlainText: text),
+            text: text
+        )
     }
 
 }

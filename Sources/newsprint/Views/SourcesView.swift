@@ -7,12 +7,15 @@ struct SourcesView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.newsprintTheme) private var theme
     let sources: [Source]
+    @ObservedObject var viewModel: SourcesViewModel
     let refresh: (Source) -> Void
+    let sourceInserted: (Source) -> Void
     let sourceChanged: () -> Void
     let sourceContentChanged: () -> Void
-    @StateObject private var viewModel = SourcesViewModel()
     @State private var editingSource: Source?
     @State private var sourcePendingDelete: Source?
+    @State private var renderedTableSections = Set<SourcesPageSection>()
+    @State private var didScheduleTablePrewarm = false
 
     var body: some View {
         SourcesPageShell(
@@ -78,9 +81,13 @@ struct SourcesView: View {
         }
         .onAppear {
             viewModel.configureSources(sources)
+            prewarmTables()
         }
         .onChange(of: sourceConfigurationToken) {
-            viewModel.configureSources(sources)
+            viewModel.configureSourcesAfterExternalChange(sources)
+        }
+        .onChange(of: viewModel.selectedSection) {
+            renderedTableSections.insert(viewModel.selectedSection)
         }
         .confirmationDialog("Delete this source and its articles?", isPresented: sourceDeleteConfirmationBinding) {
             if let source = sourcePendingDelete {
@@ -198,32 +205,41 @@ struct SourcesView: View {
 
     @ViewBuilder
     private var tableContent: some View {
-        switch viewModel.selectedSection {
-        case .presets:
-            PresetsTable(
-                rows: viewModel.presetRows,
-                selection: $viewModel.selectedPresetID,
-                addPreset: addPreset
-            )
-        case .addedSources:
-            AddedSourcesTable(
-                rows: viewModel.sourceRows,
-                selection: $viewModel.selectedSourceID,
-                selectedSource: { id in
-                    sources.first { $0.id == id }
-                },
-                refresh: refresh,
-                edit: { source in
-                    editingSource = source
-                },
-                updateEnabled: { source, enabled in
-                    viewModel.updateEnabled(source, enabled: enabled, context: modelContext, onSourcesChanged: sourceChanged)
-                },
-                deleteSource: { source in
-                    sourcePendingDelete = source
-                }
-            )
+        let sections = renderedTableSections.union([viewModel.selectedSection])
+        ZStack {
+            if sections.contains(.presets) {
+                PresetsTable(
+                    rows: viewModel.presetRows,
+                    selection: $viewModel.selectedPresetID,
+                    addPreset: addPreset
+                )
+                .opacity(viewModel.selectedSection == .presets ? 1 : 0)
+                .allowsHitTesting(viewModel.selectedSection == .presets)
+            }
+
+            if sections.contains(.addedSources) {
+                AddedSourcesTable(
+                    rows: viewModel.sourceRows,
+                    selection: $viewModel.selectedSourceID,
+                    selectedSource: { id in
+                        sources.first { $0.id == id }
+                    },
+                    refresh: refresh,
+                    edit: { source in
+                        editingSource = source
+                    },
+                    updateEnabled: { source, enabled in
+                        viewModel.updateEnabled(source, enabled: enabled, context: modelContext, onSourcesChanged: sourceChanged)
+                    },
+                    deleteSource: { source in
+                        sourcePendingDelete = source
+                    }
+                )
+                .opacity(viewModel.selectedSection == .addedSources ? 1 : 0)
+                .allowsHitTesting(viewModel.selectedSection == .addedSources)
+            }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var selectedSource: Source? {
@@ -253,7 +269,19 @@ struct SourcesView: View {
     }
 
     private func addPreset(_ row: PresetRowDisplayItem) {
-        viewModel.addPreset(row.preset, context: modelContext, onSourcesChanged: sourceChanged)
+        viewModel.addPreset(row, context: modelContext, onSourceInserted: sourceInserted)
+    }
+
+    private func prewarmTables() {
+        renderedTableSections.insert(viewModel.selectedSection)
+        guard !didScheduleTablePrewarm else {
+            return
+        }
+        didScheduleTablePrewarm = true
+        Task { @MainActor in
+            await Task.yield()
+            renderedTableSections = Set(SourcesPageSection.allCases)
+        }
     }
 
     private var sourceConfigurationToken: [SourceConfigurationToken] {

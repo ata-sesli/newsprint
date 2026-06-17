@@ -59,6 +59,36 @@ import Testing
     #expect(row.iconName == "dot.radiowaves.left.and.right")
 }
 
+@Test func sourceDisplayBuilderSingleSourceRowMatchesBulkBuilder() throws {
+    let source = Source(
+        title: "Example",
+        url: URL(string: "https://example.com/feed.xml")!,
+        kind: .rss,
+        category: "Engineering"
+    )
+
+    let single = SourceDisplayItemBuilder.sourceRow(for: source)
+    let bulk = try #require(SourceDisplayItemBuilder.sourceRows(for: [source]).first)
+
+    #expect(single == bulk)
+}
+
+@Test func sourceDisplayBuilderMarksSinglePresetAddedWithoutReorderingRows() throws {
+    let rows = SourceDisplayItemBuilder.presetRows(for: [])
+    let selected = try #require(rows.first { $0.title == "GitHub Engineering" })
+
+    let updatedRows = SourceDisplayItemBuilder.markPresetAdded(
+        canonicalURLString: selected.canonicalURLString,
+        in: rows
+    )
+    let updatedSelected = try #require(updatedRows.first { $0.id == selected.id })
+    let otherRows = updatedRows.filter { $0.id != selected.id }
+
+    #expect(updatedRows.map(\.id) == rows.map(\.id))
+    #expect(updatedSelected.isAdded)
+    #expect(otherRows.allSatisfy { !$0.isAdded })
+}
+
 @Test func sourcesSelectionResolvesPresetRow() throws {
     let rows = SourceDisplayItemBuilder.presetRows(for: [])
     let selected = try #require(rows.first)

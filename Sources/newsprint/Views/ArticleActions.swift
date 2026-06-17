@@ -80,15 +80,17 @@ struct HackerNewsBadge: View {
 
 struct HackerNewsStatLabels: View {
     @Environment(\.newsprintTheme) private var theme
+    @Environment(\.readerFontSize) private var readerFontSize
     let metadata: HackerNewsMetadata
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 14) {
             if let points = metadata.points {
                 HackerNewsStatBadge(
                     value: points,
                     systemImage: "arrowtriangle.up.fill",
-                    accessibilityLabel: "\(points) \(points == 1 ? "point" : "points")"
+                    accessibilityLabel: "\(points) \(points == 1 ? "point" : "points")",
+                    fontSize: statFontSize
                 )
             }
 
@@ -96,10 +98,15 @@ struct HackerNewsStatLabels: View {
                 HackerNewsStatBadge(
                     value: commentCount,
                     systemImage: "text.bubble",
-                    accessibilityLabel: "\(commentCount) \(commentCount == 1 ? "comment" : "comments")"
+                    accessibilityLabel: "\(commentCount) \(commentCount == 1 ? "comment" : "comments")",
+                    fontSize: statFontSize
                 )
             }
         }
+    }
+
+    private var statFontSize: CGFloat {
+        max(17, CGFloat(readerFontSize) * 1.12)
     }
 }
 
@@ -108,23 +115,17 @@ private struct HackerNewsStatBadge: View {
     let value: Int
     let systemImage: String
     let accessibilityLabel: String
+    let fontSize: CGFloat
 
     var body: some View {
         HStack(spacing: 6) {
             Image(systemName: systemImage)
-                .font(.callout.weight(.semibold))
+                .font(.system(size: fontSize, weight: .semibold))
             Text("\(value)")
-                .font(.callout.weight(.semibold))
+                .font(.system(size: fontSize, weight: .semibold))
                 .monospacedDigit()
         }
         .foregroundStyle(theme.metadata)
-        .padding(.horizontal, 8)
-        .padding(.vertical, 5)
-        .background(theme.readerSurface.opacity(0.65), in: RoundedRectangle(cornerRadius: 7))
-        .overlay {
-            RoundedRectangle(cornerRadius: 7)
-                .stroke(Color(nsColor: .separatorColor).opacity(0.22))
-        }
         .accessibilityLabel(accessibilityLabel)
     }
 }

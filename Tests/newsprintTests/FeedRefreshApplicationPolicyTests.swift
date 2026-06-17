@@ -26,4 +26,31 @@ struct FeedRefreshApplicationPolicyTests {
             isArticleFeedVisible: false
         ))
     }
+
+    @Test("Changed manual refresh shows apply skeleton on visible article feed")
+    func changedManualRefreshShowsApplySkeletonOnVisibleArticleFeed() {
+        #expect(FeedRefreshApplicationPolicy.shouldShowApplySkeleton(
+            origin: .manual,
+            isArticleFeedVisible: true,
+            summary: FeedRefreshSummary(insertedCount: 1, insertedArticleIDs: ["article-1"])
+        ))
+    }
+
+    @Test("Unchanged refresh does not show apply skeleton")
+    func unchangedRefreshDoesNotShowApplySkeleton() {
+        #expect(!FeedRefreshApplicationPolicy.shouldShowApplySkeleton(
+            origin: .manual,
+            isArticleFeedVisible: true,
+            summary: FeedRefreshSummary(skippedCount: 3)
+        ))
+    }
+
+    @Test("Refresh away from article feed does not show apply skeleton")
+    func refreshAwayFromArticleFeedDoesNotShowApplySkeleton() {
+        #expect(!FeedRefreshApplicationPolicy.shouldShowApplySkeleton(
+            origin: .manual,
+            isArticleFeedVisible: false,
+            summary: FeedRefreshSummary(insertedCount: 1, insertedArticleIDs: ["article-1"])
+        ))
+    }
 }

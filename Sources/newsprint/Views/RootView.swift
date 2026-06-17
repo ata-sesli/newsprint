@@ -9,15 +9,13 @@ struct RootView: View {
     @Query private var settingsItems: [AppSettings]
     @StateObject private var viewModel = RootViewModel()
     @StateObject private var feedStore = ArticleFeedStore()
+    @StateObject private var sourcesViewModel = SourcesViewModel()
     @State private var selection: SidebarSelection = .inbox
     @State private var expandedArticleID: String?
     @State private var focusedArticleID: String?
     @State private var previewArticleID: String?
     @State private var searchText = ""
     @State private var feedSort: ArticleFeedSort = .hot
-    @State private var hasOpenedSources = false
-    @State private var hasOpenedRules = false
-    @State private var hasOpenedSettings = false
     @AppStorage("newsprint.previewMode") private var previewModeRawValue = PreviewMode.reader.rawValue
     @AppStorage("newsprint.previewPaneCollapsed") private var isPreviewCollapsed = false
     @FocusState private var searchFocused: Bool
@@ -67,7 +65,6 @@ struct RootView: View {
         })
 
         view = AnyView(view.onChange(of: selection) {
-            markManagementPaneOpened(selection)
             if selection.isArticleFeedSelection {
                 expandedArticleID = nil
                 focusedArticleID = nil
@@ -119,7 +116,7 @@ struct RootView: View {
         })
 
         view = AnyView(view.onReceive(NotificationCenter.default.publisher(for: .newsprintOpenOriginal)) { _ in
-            if let url = actionArticle?.url {
+            if let url = actionArticle?.previewURL {
                 NSWorkspace.shared.open(url)
             }
         })
@@ -173,11 +170,12 @@ struct RootView: View {
             settings: settingsItems.first,
             onDataChanged: { reloadFeedAfterBulkChange() }
         )
+        feedStore.configure(container: agentController.modelContainer)
         reloadFeed()
         NewsprintLog.startup.info("Tag load scheduled after 1.0s")
         try? await Task.sleep(for: .seconds(1))
         guard !Task.isCancelled else { return }
-        feedStore.refreshTagNames(context: modelContext)
+        feedStore.refreshTagNames()
     }
 
     @ViewBuilder
@@ -197,6 +195,7 @@ struct RootView: View {
                 isLoading: feedStore.isLoading,
                 isPreparingFeed: feedStore.isPreparingFeed,
                 isRefreshing: agentController.isRefreshing || feedStore.isPreparingFeed,
+                isActive: selection.isArticleFeedSelection,
                 hasLoadedInitialPage: feedStore.hasLoadedInitialPage,
                 previewArticle: previewArticle,
                 previewArticleID: $previewArticleID,
@@ -205,7 +204,7 @@ struct RootView: View {
                 reloadGeneration: feedStore.bulkReloadGeneration,
                 edgeResetGeneration: feedStore.edgeResetGeneration,
                 onNearEnd: { index in
-                    feedStore.shiftRenderWindowIfNeeded(localIndex: index, context: modelContext)
+                    feedStore.shiftRenderWindowIfNeeded(localIndex: index)
                 },
                 cleanHome: cleanHome,
                 applyPendingRefresh: applyPendingRefresh,
@@ -217,40 +216,35 @@ struct RootView: View {
             .opacity(selection.isArticleFeedSelection ? 1 : 0)
             .allowsHitTesting(selection.isArticleFeedSelection)
 
-            managementPane
-                .opacity(selection.isArticleFeedSelection ? 0 : 1)
-                .allowsHitTesting(!selection.isArticleFeedSelection)
+            if !selection.isArticleFeedSelection {
+                managementPane
+            }
         }
     }
 
     @ViewBuilder
     private var managementPane: some View {
-        ZStack {
-            if hasOpenedSources || selection == .sources {
-                sourcesPane
-                    .opacity(selection == .sources ? 1 : 0)
-                    .allowsHitTesting(selection == .sources)
-            }
-
-            if hasOpenedRules || selection == .rules {
-                RulesView()
-                    .opacity(selection == .rules ? 1 : 0)
-                    .allowsHitTesting(selection == .rules)
-            }
-
-            if hasOpenedSettings || selection == .settings {
-                SettingsView()
-                    .opacity(selection == .settings ? 1 : 0)
-                    .allowsHitTesting(selection == .settings)
-            }
+        switch selection {
+        case .sources:
+            sourcesPane
+        case .rules:
+            RulesView()
+        case .settings:
+            SettingsView()
+        case .inbox, .unread, .today, .starred, .hidden, .source, .tag:
+            EmptyView()
         }
     }
 
     private var sourcesPane: some View {
         SourcesView(
             sources: viewModel.sources,
+            viewModel: sourcesViewModel,
             refresh: { source in
                 agentController.refresh(sourceID: source.id)
+            },
+            sourceInserted: { source in
+                viewModel.noteSourceInserted(source)
             },
             sourceChanged: {
                 viewModel.reloadSources(context: modelContext)
@@ -259,19 +253,6 @@ struct RootView: View {
                 reloadFeedAfterBulkChange()
             }
         )
-    }
-
-    private func markManagementPaneOpened(_ selection: SidebarSelection) {
-        switch selection {
-        case .sources:
-            hasOpenedSources = true
-        case .rules:
-            hasOpenedRules = true
-        case .settings:
-            hasOpenedSettings = true
-        case .inbox, .unread, .today, .starred, .hidden, .source, .tag:
-            break
-        }
     }
 
     private var theme: NewsprintTheme {
@@ -323,55 +304,47 @@ struct RootView: View {
         }
     }
 
-    private var previewArticle: Article? {
-        guard let previewArticleID else { return nil }
-        return feedStore.articles.first { $0.id == previewArticleID }
+    private var previewArticle: ArticleFeedDisplayItem? {
+        feedStore.item(id: previewArticleID)
     }
 
-    private var actionArticle: Article? {
+    private var actionArticle: ArticleFeedDisplayItem? {
         let id = expandedArticleID ?? focusedArticleID
-        guard let id else { return nil }
-        return feedStore.articles.first { $0.id == id }
+        return feedStore.item(id: id)
     }
 
     private func markExpandedReadOnOpenIfNeeded() {
         guard settingsItems.first?.markReadOnOpen == true,
               let expandedArticleID,
-              let article = feedStore.articles.first(where: { $0.id == expandedArticleID }),
+              let article = feedStore.item(id: expandedArticleID),
               !article.isRead else {
             return
         }
-        saveArticle(article, .markRead)
+        saveArticle(article.id, .markRead)
     }
 
     private func saveSelected(_ mutation: ArticleStateMutation) {
         guard let article = actionArticle else { return }
-        saveArticle(article, mutation)
+        saveArticle(article.id, mutation)
     }
 
-    private func saveArticle(_ article: Article, _ mutation: ArticleStateMutation) {
-        let previousState = ArticleStateSnapshot(article: article)
-        guard viewModel.saveArticleState(article, mutation: mutation, context: modelContext) else {
+    private func saveArticle(_ articleID: String, _ mutation: ArticleStateMutation) {
+        guard let snapshotMutation = viewModel.saveArticleState(articleID: articleID, mutation: mutation, context: modelContext) else {
             return
         }
-        feedStore.refreshAfterArticleMutation(
-            context: modelContext,
-            article: article,
-            previousState: previousState,
-            mutation: mutation
-        )
+        feedStore.applyMutation(articleID: articleID, mutation: snapshotMutation)
     }
 
     private func reloadFeed() {
-        feedStore.reloadIfNeeded(context: modelContext, filter: activeFilter, searchText: searchText, sort: feedSort)
+        feedStore.reloadIfNeeded(filter: activeFilter, searchText: searchText, sort: feedSort)
     }
 
     private func reloadFeedAfterBulkChange() {
-        feedStore.reloadAfterBulkDataChange(context: modelContext)
+        feedStore.reloadAfterBulkDataChange()
         Task { @MainActor in
             try? await Task.sleep(for: .seconds(1))
             guard !Task.isCancelled else { return }
-            feedStore.refreshTagNames(context: modelContext)
+            feedStore.refreshTagNames()
         }
     }
 
@@ -384,21 +357,41 @@ struct RootView: View {
                 feedStore.storePendingRefresh(event.summary)
                 scheduleTagRefresh()
             } else {
-                applyRefreshSummary(event.summary)
+                applyRefreshSummary(
+                    event.summary,
+                    showSkeleton: FeedRefreshApplicationPolicy.shouldShowApplySkeleton(
+                        origin: event.origin,
+                        isArticleFeedVisible: selection.isArticleFeedSelection,
+                        summary: event.summary
+                    )
+                )
             }
             return
         }
 
         if let summary = object as? FeedRefreshSummary {
-            applyRefreshSummary(summary)
+            applyRefreshSummary(
+                summary,
+                showSkeleton: FeedRefreshApplicationPolicy.shouldShowApplySkeleton(
+                    origin: .manual,
+                    isArticleFeedVisible: selection.isArticleFeedSelection,
+                    summary: summary
+                )
+            )
             return
         }
 
         if let summary = object as? SourceRefreshSummary {
-            feedStore.beginPreparingFeed()
-            Task { @MainActor in
-                await Task.yield()
-                feedStore.prepareAfterSourceRefresh(context: modelContext, summary: summary)
+            let showSkeleton = selection.isArticleFeedSelection && summary.insertedCount > 0
+            if showSkeleton {
+                feedStore.beginPreparingFeed()
+                Task { @MainActor in
+                    await Task.yield()
+                    feedStore.prepareAfterSourceRefresh(summary: summary)
+                    scheduleTagRefresh()
+                }
+            } else {
+                feedStore.prepareAfterSourceRefresh(summary: summary)
                 scheduleTagRefresh()
             }
             return
@@ -412,11 +405,16 @@ struct RootView: View {
         }
     }
 
-    private func applyRefreshSummary(_ summary: FeedRefreshSummary) {
-        feedStore.beginPreparingFeed()
-        Task { @MainActor in
-            await Task.yield()
-            feedStore.prepareAfterRefresh(context: modelContext, summary: summary)
+    private func applyRefreshSummary(_ summary: FeedRefreshSummary, showSkeleton: Bool) {
+        if showSkeleton {
+            feedStore.beginPreparingFeed()
+            Task { @MainActor in
+                await Task.yield()
+                feedStore.prepareAfterRefresh(summary: summary)
+                scheduleTagRefresh()
+            }
+        } else {
+            feedStore.prepareAfterRefresh(summary: summary)
             scheduleTagRefresh()
         }
     }
@@ -425,7 +423,7 @@ struct RootView: View {
         feedStore.beginPreparingFeed()
         Task { @MainActor in
             await Task.yield()
-            feedStore.applyPendingRefresh(context: modelContext)
+            feedStore.applyPendingRefresh()
             scheduleTagRefresh()
         }
     }
@@ -434,7 +432,7 @@ struct RootView: View {
         Task { @MainActor in
             try? await Task.sleep(for: .seconds(1))
             guard !Task.isCancelled else { return }
-            feedStore.refreshTagNames(context: modelContext)
+            feedStore.refreshTagNames()
         }
     }
 
@@ -444,7 +442,7 @@ struct RootView: View {
             expandedArticleID = nil
             focusedArticleID = nil
             if let previewArticleID,
-               !feedStore.articles.contains(where: { $0.id == previewArticleID }) {
+               feedStore.item(id: previewArticleID) == nil {
                 self.previewArticleID = nil
             }
             viewModel.errorMessage = nil

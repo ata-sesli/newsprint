@@ -9,6 +9,16 @@ public enum FeedRefreshApplicationPolicy {
     public static func shouldDefer(origin: FeedRefreshOrigin, isArticleFeedVisible: Bool) -> Bool {
         origin == .automatic && isArticleFeedVisible
     }
+
+    public static func shouldShowApplySkeleton(
+        origin: FeedRefreshOrigin,
+        isArticleFeedVisible: Bool,
+        summary: FeedRefreshSummary
+    ) -> Bool {
+        isArticleFeedVisible &&
+            summary.hasFeedChanges &&
+            !shouldDefer(origin: origin, isArticleFeedVisible: isArticleFeedVisible)
+    }
 }
 
 public struct FeedRefreshEvent: Sendable, Equatable {

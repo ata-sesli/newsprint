@@ -28,11 +28,19 @@ final class SourcesViewModel: ObservableObject {
     @Published var selectedPresetID: String?
     @Published private(set) var sourceRows: [SourceRowDisplayItem] = []
     @Published private(set) var presetRows: [PresetRowDisplayItem] = SourceDisplayItemBuilder.presetRows(for: [])
+    private var locallyInsertedSourceIDs = Set<UUID>()
 
     func configureSources(_ sources: [Source]) {
         sourceRows = SourceDisplayItemBuilder.sourceRows(for: sources)
         presetRows = SourceDisplayItemBuilder.presetRows(for: sources)
         pruneMissingSelections()
+    }
+
+    func configureSourcesAfterExternalChange(_ sources: [Source]) {
+        if consumeLocalInsertChange(in: sources) {
+            return
+        }
+        configureSources(sources)
     }
 
     var selectedPresetRow: PresetRowDisplayItem? {
@@ -118,6 +126,42 @@ final class SourcesViewModel: ObservableObject {
             category: preset.category
         )
         saveNewSource(source, context: context, onSourcesChanged: onSourcesChanged)
+    }
+
+    func addPreset(_ row: PresetRowDisplayItem, context: ModelContext, onSourceInserted: (Source) -> Void) {
+        if row.isAdded || presetRows.first(where: { $0.id == row.id })?.isAdded == true {
+            errorMessage = "That source is already added."
+            sourceMessage = "Already added: \(row.title)."
+            return
+        }
+
+        let preset = row.preset
+        let source = Source(
+            title: preset.title,
+            url: preset.url,
+            kind: preset.kind,
+            category: preset.category
+        )
+
+        do {
+            let inserted = try SwiftDataSourceRepository(context: context).saveIfNew(source)
+            guard inserted else {
+                presetRows = SourceDisplayItemBuilder.markPresetAdded(
+                    canonicalURLString: row.canonicalURLString,
+                    in: presetRows
+                )
+                errorMessage = "That source is already added."
+                sourceMessage = "Already added: \(row.title)."
+                return
+            }
+            noteSourceInserted(source, presetID: row.id, canonicalURLString: row.canonicalURLString)
+            errorMessage = nil
+            sourceMessage = "Added \(source.title)."
+            onSourceInserted(source)
+        } catch {
+            errorMessage = error.localizedDescription
+            sourceMessage = nil
+        }
     }
 
     func addHackerNewsFeed(context: ModelContext, onSourcesChanged: () -> Void) {
@@ -282,6 +326,34 @@ final class SourcesViewModel: ObservableObject {
 
     private func saveSource(_ source: Source, context: ModelContext) throws -> Bool {
         try SwiftDataSourceRepository(context: context).saveIfNew(source)
+    }
+
+    private func noteSourceInserted(_ source: Source, presetID: String, canonicalURLString: String) {
+        if !sourceRows.contains(where: { $0.id == source.id }) {
+            sourceRows.append(SourceDisplayItemBuilder.sourceRow(for: source))
+            sourceRows.sort {
+                $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending
+            }
+        }
+        presetRows = SourceDisplayItemBuilder.markPresetAdded(
+            canonicalURLString: canonicalURLString,
+            in: presetRows
+        )
+        selectedPresetID = presetID
+        locallyInsertedSourceIDs.insert(source.id)
+        pruneMissingSelections()
+    }
+
+    private func consumeLocalInsertChange(in sources: [Source]) -> Bool {
+        guard !locallyInsertedSourceIDs.isEmpty else {
+            return false
+        }
+        let sourceIDs = Set(sources.map(\.id))
+        guard locallyInsertedSourceIDs.isSubset(of: sourceIDs) else {
+            return false
+        }
+        locallyInsertedSourceIDs.removeAll()
+        return true
     }
 
     private func pruneMissingSelections() {
