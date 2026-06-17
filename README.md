@@ -514,6 +514,16 @@ The release script:
 - Adds the app icon.
 - Signs the local app bundle.
 
+### Publish a Release
+
+After the Homebrew tap repo exists, publish a new local-built release with:
+
+```sh
+scripts/publish-release.sh 1.0.1
+```
+
+This builds the app, zips it, updates the cask version and checksum, tags the current release commit, creates the GitHub Release with `gh`, uploads the zip, and pushes the updated cask to the tap repo.
+
 ## Project Layout
 
 ```text

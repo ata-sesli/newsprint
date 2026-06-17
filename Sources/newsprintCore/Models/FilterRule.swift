@@ -1,7 +1,7 @@
 import Foundation
 import SwiftData
 
-public enum RuleTarget: String, Codable, CaseIterable, Identifiable {
+public enum RuleTarget: String, Codable, CaseIterable, Identifiable, Sendable {
     case title
     case author
     case source
@@ -25,7 +25,7 @@ public enum RuleTarget: String, Codable, CaseIterable, Identifiable {
     }
 }
 
-public enum RuleMatchMode: String, Codable, CaseIterable, Identifiable {
+public enum RuleMatchMode: String, Codable, CaseIterable, Identifiable, Sendable {
     case contains
     case doesNotContain
 
@@ -39,7 +39,7 @@ public enum RuleMatchMode: String, Codable, CaseIterable, Identifiable {
     }
 }
 
-public enum RuleAction: String, Codable, CaseIterable, Identifiable {
+public enum RuleAction: String, Codable, CaseIterable, Identifiable, Sendable {
     case hide
     case star
     case markRead
@@ -114,4 +114,3 @@ public final class FilterRule {
         self.updatedAt = updatedAt
     }
 }
-

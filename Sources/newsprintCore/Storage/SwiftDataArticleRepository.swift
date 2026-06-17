@@ -4,10 +4,20 @@ import SwiftData
 public struct ArticleBatchInsertResult: Equatable, Sendable {
     public let insertedCount: Int
     public let skippedCount: Int
+    public let insertedArticleIDs: [String]
 
-    public init(insertedCount: Int, skippedCount: Int) {
+    public init(insertedCount: Int, skippedCount: Int, insertedArticleIDs: [String] = []) {
         self.insertedCount = insertedCount
         self.skippedCount = skippedCount
+        self.insertedArticleIDs = insertedArticleIDs
+    }
+}
+
+public struct ArticleCleanupResult: Equatable, Sendable {
+    public let deletedCount: Int
+
+    public init(deletedCount: Int) {
+        self.deletedCount = deletedCount
     }
 }
 
@@ -59,6 +69,7 @@ public final class SwiftDataArticleRepository {
         )
         let existingIDs = Set(try context.fetch(descriptor).map(\.id))
         var seenIDs = Set<String>()
+        var insertedArticleIDs: [String] = []
         var insertedCount = 0
         var skippedCount = 0
 
@@ -71,6 +82,7 @@ public final class SwiftDataArticleRepository {
 
             context.insert(article)
             seenIDs.insert(article.id)
+            insertedArticleIDs.append(article.id)
             insertedCount += 1
         }
 
@@ -78,7 +90,28 @@ public final class SwiftDataArticleRepository {
             try context.save()
         }
 
-        return ArticleBatchInsertResult(insertedCount: insertedCount, skippedCount: skippedCount)
+        return ArticleBatchInsertResult(
+            insertedCount: insertedCount,
+            skippedCount: skippedCount,
+            insertedArticleIDs: insertedArticleIDs
+        )
+    }
+
+    @discardableResult
+    public func deleteNonStarredArticles() throws -> ArticleCleanupResult {
+        let descriptor = FetchDescriptor<Article>(
+            predicate: #Predicate<Article> { article in
+                !article.isStarred
+            }
+        )
+        let articles = try context.fetch(descriptor)
+        for article in articles {
+            context.delete(article)
+        }
+        if !articles.isEmpty {
+            try context.save()
+        }
+        return ArticleCleanupResult(deletedCount: articles.count)
     }
 
     public func markRead(_ article: Article, read: Bool) throws {

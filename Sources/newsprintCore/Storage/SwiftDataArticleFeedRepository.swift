@@ -77,6 +77,19 @@ public struct SwiftDataArticleFeedRepository {
         return FeedCounts(today: today, unread: unread, starred: starred, hidden: hidden)
     }
 
+    public func fetchArticles(ids: [String]) throws -> [Article] {
+        let uniqueIDs = Array(Set(ids))
+        guard !uniqueIDs.isEmpty else {
+            return []
+        }
+        let descriptor = FetchDescriptor<Article>(
+            predicate: #Predicate<Article> { article in
+                uniqueIDs.contains(article.id)
+            }
+        )
+        return try context.fetch(descriptor)
+    }
+
     public func fetchTagNames() throws -> [String] {
         let articles = try context.fetch(FetchDescriptor<Article>())
         return Array(Set(articles.flatMap(\.tagNames))).sorted()

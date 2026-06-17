@@ -2,6 +2,7 @@ import Foundation
 import SwiftData
 
 @MainActor
+@available(*, deprecated, message: "Use FeedRefreshActor for UI and background refreshes.")
 public final class FeedRefreshService {
     private let context: ModelContext
     private let sourceRepository: SwiftDataSourceRepository
@@ -46,7 +47,8 @@ public final class FeedRefreshService {
         do {
             try sourceRepository.markFetchStarted(source)
             NewsprintLog.feed.info("Refreshing source: \(source.title, privacy: .public)")
-            let response = try await httpClient.fetch(source: source)
+            let snapshot = SourceSnapshot(source: source)
+            let response = try await httpClient.fetch(source: snapshot)
 
             if response.isNotModified {
                 try sourceRepository.markFetchSucceeded(source, response: response)
@@ -56,7 +58,7 @@ public final class FeedRefreshService {
                 return
             }
 
-            let drafts = try parser.parse(data: response.data, source: source)
+            let drafts = try parser.parse(data: response.data, source: snapshot)
             let rules = try ruleRepository.enabledRules()
             let articles = drafts.map { draft in
                 let result = ruleEngine.apply(rules: rules, to: draft)

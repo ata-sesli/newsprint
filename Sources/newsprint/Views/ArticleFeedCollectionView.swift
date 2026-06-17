@@ -5,6 +5,7 @@ import newsprintCore
 struct ArticleFeedCollectionView: NSViewRepresentable {
     let items: [ArticleFeedItemModel]
     let reloadGeneration: Int
+    let edgeResetGeneration: Int
     let onToggleExpanded: (Article) -> Void
     let onOpenInPreview: (Article) -> Void
     let onNearEnd: (Int) -> Void
@@ -14,6 +15,7 @@ struct ArticleFeedCollectionView: NSViewRepresentable {
         ArticleFeedCollectionCoordinator(
             items: items,
             reloadGeneration: reloadGeneration,
+            edgeResetGeneration: edgeResetGeneration,
             onToggleExpanded: onToggleExpanded,
             onOpenInPreview: onOpenInPreview,
             onNearEnd: onNearEnd,
@@ -67,6 +69,7 @@ struct ArticleFeedCollectionView: NSViewRepresentable {
         context.coordinator.update(
             items: items,
             reloadGeneration: reloadGeneration,
+            edgeResetGeneration: edgeResetGeneration,
             onToggleExpanded: onToggleExpanded,
             onOpenInPreview: onOpenInPreview,
             onNearEnd: onNearEnd,
@@ -85,8 +88,10 @@ final class ArticleFeedCollectionCoordinator: NSObject, NSCollectionViewDataSour
     weak var layout: NSCollectionViewFlowLayout?
     private var items: [ArticleFeedItemModel]
     private var reloadGeneration: Int
+    private var edgeResetGeneration: Int
     private let heightCache = ArticleFeedHeightCache()
     private var lastLayoutWidth: CGFloat = 0
+    private var edgeReporter = ArticleRenderWindowEdgeReporter()
     private var onToggleExpanded: (Article) -> Void
     private var onOpenInPreview: (Article) -> Void
     private var onNearEnd: (Int) -> Void
@@ -95,6 +100,7 @@ final class ArticleFeedCollectionCoordinator: NSObject, NSCollectionViewDataSour
     init(
         items: [ArticleFeedItemModel],
         reloadGeneration: Int,
+        edgeResetGeneration: Int,
         onToggleExpanded: @escaping (Article) -> Void,
         onOpenInPreview: @escaping (Article) -> Void,
         onNearEnd: @escaping (Int) -> Void,
@@ -102,6 +108,7 @@ final class ArticleFeedCollectionCoordinator: NSObject, NSCollectionViewDataSour
     ) {
         self.items = items
         self.reloadGeneration = reloadGeneration
+        self.edgeResetGeneration = edgeResetGeneration
         self.onToggleExpanded = onToggleExpanded
         self.onOpenInPreview = onOpenInPreview
         self.onNearEnd = onNearEnd
@@ -111,6 +118,7 @@ final class ArticleFeedCollectionCoordinator: NSObject, NSCollectionViewDataSour
     func update(
         items newItems: [ArticleFeedItemModel],
         reloadGeneration newReloadGeneration: Int,
+        edgeResetGeneration newEdgeResetGeneration: Int,
         onToggleExpanded: @escaping (Article) -> Void,
         onOpenInPreview: @escaping (Article) -> Void,
         onNearEnd: @escaping (Int) -> Void,
@@ -122,12 +130,14 @@ final class ArticleFeedCollectionCoordinator: NSObject, NSCollectionViewDataSour
         let oldExpandedID = items.first(where: \.isExpanded)?.id
         let oldAppearanceKey = items.first.map(appearanceKey)
         let oldReloadGeneration = reloadGeneration
+        let oldEdgeResetGeneration = edgeResetGeneration
         let newIDs = newItems.map(\.id)
         let newExpandedID = newItems.first(where: \.isExpanded)?.id
         let newAppearanceKey = newItems.first.map(appearanceKey)
 
         items = newItems
         reloadGeneration = newReloadGeneration
+        edgeResetGeneration = newEdgeResetGeneration
         self.onToggleExpanded = onToggleExpanded
         self.onOpenInPreview = onOpenInPreview
         self.onNearEnd = onNearEnd
@@ -137,10 +147,26 @@ final class ArticleFeedCollectionCoordinator: NSObject, NSCollectionViewDataSour
             return
         }
 
-        if oldReloadGeneration != newReloadGeneration || oldIDs != newIDs || oldAppearanceKey != newAppearanceKey {
+        if oldEdgeResetGeneration != newEdgeResetGeneration {
+            edgeReporter.reset()
+        }
+        let visibleAnchorID = visibleAnchorID(in: collectionView)
+
+        if oldReloadGeneration != newReloadGeneration {
             heightCache.removeAll()
+            edgeReporter.reset()
             collectionView.reloadData()
             collectionView.collectionViewLayout?.invalidateLayout()
+            scrollToTop(in: collectionView)
+            return
+        }
+
+        if oldIDs != newIDs || oldAppearanceKey != newAppearanceKey {
+            heightCache.removeAll()
+            edgeReporter.reset()
+            collectionView.reloadData()
+            collectionView.collectionViewLayout?.invalidateLayout()
+            restoreVisibleAnchor(visibleAnchorID, in: collectionView)
             return
         }
 
@@ -172,8 +198,6 @@ final class ArticleFeedCollectionCoordinator: NSObject, NSCollectionViewDataSour
         }
 
         let index = indexPath.item
-        notifyNearEndIfNeeded(index: index)
-
         let model = items[index]
         articleItem.configure(
             model: model,
@@ -190,13 +214,6 @@ final class ArticleFeedCollectionCoordinator: NSObject, NSCollectionViewDataSour
         return articleItem
     }
 
-    private func notifyNearEndIfNeeded(index: Int) {
-        guard index >= max(0, items.count - ArticleFeedStore.loadMoreThreshold) else {
-            return
-        }
-        onNearEnd(index)
-    }
-
     func collectionView(
         _ collectionView: NSCollectionView,
         layout collectionViewLayout: NSCollectionViewLayout,
@@ -208,6 +225,10 @@ final class ArticleFeedCollectionCoordinator: NSObject, NSCollectionViewDataSour
         }
 
         let model = items[indexPath.item]
+        guard model.isExpanded else {
+            return NSSize(width: width, height: CGFloat(model.density.collapsedCardHeight))
+        }
+
         let key = model.heightCacheKey(width: width)
         if let cached = heightCache.height(for: key) {
             return NSSize(width: width, height: cached)
@@ -224,13 +245,34 @@ final class ArticleFeedCollectionCoordinator: NSObject, NSCollectionViewDataSour
         }
 
         let width = itemWidth(for: collectionView)
-        guard abs(width - lastLayoutWidth) > 1 else {
+        if abs(width - lastLayoutWidth) > 1 {
+            lastLayoutWidth = width
+            heightCache.removeAll()
+            collectionView.collectionViewLayout?.invalidateLayout()
+        }
+
+        notifyWindowEdgeIfNeeded(in: collectionView)
+    }
+
+    private func notifyWindowEdgeIfNeeded(in collectionView: NSCollectionView) {
+        let visibleIndexes = collectionView.indexPathsForVisibleItems()
+            .map(\.item)
+            .filter { $0 >= 0 && $0 < items.count }
+            .sorted()
+        guard let firstVisible = visibleIndexes.first,
+              let lastVisible = visibleIndexes.last else {
             return
         }
 
-        lastLayoutWidth = width
-        heightCache.removeAll()
-        collectionView.collectionViewLayout?.invalidateLayout()
+        if let report = edgeReporter.report(
+            firstVisible: firstVisible,
+            lastVisible: lastVisible,
+            itemCount: items.count,
+            loadMoreThreshold: ArticleFeedStore.loadMoreThreshold,
+            generation: edgeResetGeneration
+        ) {
+            onNearEnd(report.localIndex)
+        }
     }
 
     private func itemWidth(for collectionView: NSCollectionView) -> CGFloat {
@@ -245,6 +287,7 @@ final class ArticleFeedCollectionCoordinator: NSObject, NSCollectionViewDataSour
             isExpanded: model.isExpanded,
             hackerNewsMetadata: model.hackerNewsMetadata,
             metadataText: model.metadataText,
+            previewText: model.previewText,
             onToggleExpanded: {},
             onOpenInPreview: {},
             onArticleAction: { _, _ in }
@@ -296,6 +339,40 @@ final class ArticleFeedCollectionCoordinator: NSObject, NSCollectionViewDataSour
         }
         layout?.minimumLineSpacing = density.rowVerticalPadding + 10
     }
+
+    private func visibleAnchorID(in collectionView: NSCollectionView) -> String? {
+        collectionView.indexPathsForVisibleItems()
+            .sorted { $0.item < $1.item }
+            .compactMap { indexPath in
+                indexPath.item < items.count ? items[indexPath.item].id : nil
+            }
+            .first
+    }
+
+    private func restoreVisibleAnchor(_ anchorID: String?, in collectionView: NSCollectionView) {
+        guard let anchorID,
+              let index = items.firstIndex(where: { $0.id == anchorID }) else {
+            return
+        }
+        DispatchQueue.main.async {
+            collectionView.scrollToItems(
+                at: Set([IndexPath(item: index, section: 0)]),
+                scrollPosition: .top
+            )
+        }
+    }
+
+    private func scrollToTop(in collectionView: NSCollectionView) {
+        guard !items.isEmpty else {
+            return
+        }
+        DispatchQueue.main.async {
+            collectionView.scrollToItems(
+                at: Set([IndexPath(item: 0, section: 0)]),
+                scrollPosition: .top
+            )
+        }
+    }
 }
 
 @MainActor
@@ -321,6 +398,7 @@ final class ArticleFeedCollectionItem: NSCollectionViewItem {
                 isExpanded: model.isExpanded,
                 hackerNewsMetadata: model.hackerNewsMetadata,
                 metadataText: model.metadataText,
+                previewText: model.previewText,
                 onToggleExpanded: {
                     onToggleExpanded(model.article)
                 },

@@ -7,9 +7,10 @@ struct ArticleFeedView: View {
     @Environment(\.readerFontChoice) private var readerFontChoice
     @Environment(\.readerFontSize) private var readerFontSize
     @Environment(\.articleListDensity) private var density
-    let articles: [Article]
+    let displayItems: [ArticleFeedDisplayItem]
     let counts: FeedCounts
     let sources: [Source]
+    let pendingRefreshSummary: FeedRefreshSummary?
     @Binding var selection: SidebarSelection
     @Binding var searchText: String
     @Binding var feedSort: ArticleFeedSort
@@ -17,6 +18,8 @@ struct ArticleFeedView: View {
     @Binding var expandedArticleID: String?
     @Binding var focusedArticleID: String?
     let isLoading: Bool
+    let isPreparingFeed: Bool
+    let isRefreshing: Bool
     let hasLoadedInitialPage: Bool
     let previewArticle: Article?
     @Binding var previewArticleID: String?
@@ -24,7 +27,11 @@ struct ArticleFeedView: View {
     @Binding var isPreviewCollapsed: Bool
     @State private var didLogFirstAppearance = false
     let reloadGeneration: Int
+    let edgeResetGeneration: Int
     let onNearEnd: (Int) -> Void
+    let cleanHome: () -> Void
+    let applyPendingRefresh: () -> Void
+    let dismissPendingRefresh: () -> Void
     let onArticleAction: (Article, ArticleStateMutation) -> Void
 
     var body: some View {
@@ -50,11 +57,16 @@ struct ArticleFeedView: View {
             FeedControlHeader(
                 counts: counts,
                 sources: sources,
+                pendingRefreshSummary: pendingRefreshSummary,
                 selection: $selection,
                 searchText: $searchText,
                 feedSort: $feedSort,
                 isPreviewCollapsed: $isPreviewCollapsed,
-                searchFocused: searchFocused
+                isRefreshing: isRefreshing,
+                searchFocused: searchFocused,
+                cleanHome: cleanHome,
+                applyPendingRefresh: applyPendingRefresh,
+                dismissPendingRefresh: dismissPendingRefresh
             )
             .padding(.horizontal, 24)
             .padding(.top, 18)
@@ -70,6 +82,7 @@ struct ArticleFeedView: View {
                     ArticleFeedCollectionView(
                         items: itemModels,
                         reloadGeneration: reloadGeneration,
+                        edgeResetGeneration: edgeResetGeneration,
                         onToggleExpanded: { article in
                             focusedArticleID = article.id
                             expandedArticleID = expandedArticleID == article.id ? nil : article.id
@@ -95,12 +108,10 @@ struct ArticleFeedView: View {
     }
 
     private var itemModels: [ArticleFeedItemModel] {
-        articles.map { article in
+        displayItems.map { displayItem in
             ArticleFeedItemModel(
-                article: article,
-                isExpanded: expandedArticleID == article.id,
-                hackerNewsMetadata: HackerNewsMetadata(text: article.contentText ?? article.excerpt),
-                metadataText: ArticleFeedItemModel.metadataText(for: article),
+                displayItem: displayItem,
+                isExpanded: expandedArticleID == displayItem.id,
                 theme: theme,
                 readerFontChoice: readerFontChoice,
                 readerFontSize: readerFontSize,
@@ -110,11 +121,11 @@ struct ArticleFeedView: View {
     }
 
     private var showsInitialLoadingState: Bool {
-        !hasLoadedInitialPage && articles.isEmpty
+        isPreparingFeed || (!hasLoadedInitialPage && displayItems.isEmpty)
     }
 
     private var showsEmptyState: Bool {
-        hasLoadedInitialPage && !isLoading && articles.isEmpty
+        hasLoadedInitialPage && !isLoading && displayItems.isEmpty
     }
 }
 
@@ -172,6 +183,7 @@ struct ArticleFeedCard: View {
     let isExpanded: Bool
     let hackerNewsMetadata: HackerNewsMetadata?
     let metadataText: String
+    let previewText: String?
     let onToggleExpanded: () -> Void
     let onOpenInPreview: () -> Void
     let onArticleAction: (Article, ArticleStateMutation) -> Void
@@ -280,13 +292,6 @@ struct ArticleFeedCard: View {
                 HackerNewsStatLabels(metadata: hackerNewsMetadata)
             }
         }
-    }
-
-    private var previewText: String? {
-        guard hackerNewsMetadata == nil else {
-            return nil
-        }
-        return HTMLTextExtractor.text(fromHTML: article.contentText ?? article.excerpt)?.nilIfBlank
     }
 
     private var metadataFontSize: CGFloat {
@@ -398,11 +403,17 @@ struct FeedControlHeader: View {
     @Environment(\.articleListDensity) private var density
     let counts: FeedCounts
     let sources: [Source]
+    let pendingRefreshSummary: FeedRefreshSummary?
     @Binding var selection: SidebarSelection
     @Binding var searchText: String
     @Binding var feedSort: ArticleFeedSort
     @Binding var isPreviewCollapsed: Bool
+    let isRefreshing: Bool
     var searchFocused: FocusState<Bool>.Binding
+    let cleanHome: () -> Void
+    let applyPendingRefresh: () -> Void
+    let dismissPendingRefresh: () -> Void
+    @State private var isConfirmingCleanHome = false
 
     private var usesCompactControls: Bool {
         !isPreviewCollapsed
@@ -428,10 +439,20 @@ struct FeedControlHeader: View {
                     Button {
                         NotificationCenter.default.post(name: .newsprintRefreshAll, object: nil)
                     } label: {
-                        headerLabel("Refresh All", systemImage: "arrow.clockwise")
+                        refreshHeaderLabel
                     }
                     .buttonStyle(HeaderActionButtonStyle())
+                    .disabled(isRefreshing)
                     .help("Refresh All")
+
+                    Button(role: .destructive) {
+                        isConfirmingCleanHome = true
+                    } label: {
+                        headerLabel("Clean Home", systemImage: "trash")
+                    }
+                    .buttonStyle(HeaderActionButtonStyle())
+                    .disabled(isRefreshing)
+                    .help("Remove all non-starred articles")
 
                     Button {
                         isPreviewCollapsed.toggle()
@@ -450,6 +471,14 @@ struct FeedControlHeader: View {
                 SummaryPill(title: "Hidden", value: counts.hidden, systemImage: "eye.slash", isCompact: usesCompactControls)
             }
 
+            if let pendingRefreshSummary {
+                PendingFeedUpdateBanner(
+                    summary: pendingRefreshSummary,
+                    apply: applyPendingRefresh,
+                    dismiss: dismissPendingRefresh
+                )
+            }
+
             ViewThatFits(in: .horizontal) {
                 HStack(alignment: .center, spacing: 12) {
                     searchField
@@ -465,6 +494,18 @@ struct FeedControlHeader: View {
                     }
                 }
             }
+        }
+        .confirmationDialog(
+            "Clean Home?",
+            isPresented: $isConfirmingCleanHome,
+            titleVisibility: .visible
+        ) {
+            Button("Clean Home", role: .destructive) {
+                cleanHome()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This removes all non-starred articles. Starred articles are kept.")
         }
     }
 
@@ -597,6 +638,19 @@ struct FeedControlHeader: View {
         }
     }
 
+    @ViewBuilder
+    private var refreshHeaderLabel: some View {
+        if usesCompactControls {
+            RotatingRefreshIcon(isRefreshing: isRefreshing)
+                .accessibilityLabel("Refresh All")
+        } else {
+            HStack(spacing: 6) {
+                RotatingRefreshIcon(isRefreshing: isRefreshing)
+                Text("Refresh All")
+            }
+        }
+    }
+
     private var contextualFilter: String? {
         switch selection {
         case .tag(let tag):
@@ -637,6 +691,54 @@ private struct FeedFilterChip: Identifiable {
     ]
 }
 
+private struct PendingFeedUpdateBanner: View {
+    @Environment(\.newsprintTheme) private var theme
+    let summary: FeedRefreshSummary
+    let apply: () -> Void
+    let dismiss: () -> Void
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "tray.and.arrow.down")
+                .font(.headline.weight(.semibold))
+                .foregroundStyle(theme.tint)
+
+            Text(message)
+                .font(.callout.weight(.semibold))
+                .foregroundStyle(.primary)
+
+            Spacer(minLength: 12)
+
+            Button("Update Feed", systemImage: "arrow.triangle.2.circlepath") {
+                apply()
+            }
+            .buttonStyle(HeaderActionButtonStyle())
+
+            Button("Dismiss", systemImage: "xmark") {
+                dismiss()
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(theme.metadata)
+            .help("Keep the current feed unchanged")
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(theme.tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
+        .overlay {
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(theme.tint.opacity(0.26))
+        }
+    }
+
+    private var message: String {
+        if summary.insertedCount > 0 {
+            "\(summary.insertedCount) new article\(summary.insertedCount == 1 ? "" : "s") ready"
+        } else {
+            "Feed update ready"
+        }
+    }
+}
+
 private struct FilterChipButtonStyle: ButtonStyle {
     @Environment(\.newsprintTheme) private var theme
     let isSelected: Bool
@@ -667,6 +769,23 @@ private struct FilterChipButtonStyle: ButtonStyle {
 
     private var borderColor: Color {
         isSelected ? theme.tint.opacity(0.7) : Color(nsColor: .separatorColor).opacity(0.25)
+    }
+}
+
+private struct RotatingRefreshIcon: View {
+    let isRefreshing: Bool
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: !isRefreshing)) { timeline in
+            Image(systemName: "arrow.clockwise")
+                .rotationEffect(.degrees(rotationDegrees(for: timeline.date)))
+        }
+    }
+
+    private func rotationDegrees(for date: Date) -> Double {
+        guard isRefreshing else { return 0 }
+        return date.timeIntervalSinceReferenceDate
+            .truncatingRemainder(dividingBy: 1.0) * 360
     }
 }
 

@@ -55,4 +55,15 @@ public enum ArticleListDensity: String, Codable, CaseIterable, Sendable {
             "Newspaper"
         }
     }
+
+    public var collapsedCardHeight: Double {
+        switch self {
+        case .compact:
+            112
+        case .comfortable:
+            164
+        case .newspaper:
+            236
+        }
+    }
 }

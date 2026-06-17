@@ -2,27 +2,71 @@ import AppKit
 import Foundation
 import newsprintCore
 
-struct ArticleFeedItemModel: Identifiable {
+struct ArticleFeedDisplayItem: Identifiable {
     let article: Article
-    let isExpanded: Bool
     let hackerNewsMetadata: HackerNewsMetadata?
     let metadataText: String
-    let theme: NewsprintTheme
-    let readerFontChoice: ReaderFontChoice
-    let readerFontSize: Int
-    let density: ArticleListDensity
+    let previewText: String?
 
     var id: String {
         article.id
     }
 
-    static func metadataText(for article: Article) -> String {
+    init(article: Article) {
+        self.article = article
+        self.hackerNewsMetadata = HackerNewsMetadata(text: article.contentText ?? article.excerpt)
+        self.metadataText = Self.metadataText(for: article)
+        if self.hackerNewsMetadata == nil {
+            self.previewText = HTMLTextExtractor.text(fromHTML: article.contentText ?? article.excerpt)?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .nilIfEmpty
+        } else {
+            self.previewText = nil
+        }
+    }
+
+    private static func metadataText(for article: Article) -> String {
         var parts = [article.sourceTitle]
         if let author = article.author, !author.isEmpty {
             parts.append(author)
         }
         parts.append((article.publishedAt ?? article.fetchedAt).formatted(date: .abbreviated, time: .shortened))
         return parts.joined(separator: " · ")
+    }
+}
+
+private extension String {
+    var nilIfEmpty: String? {
+        isEmpty ? nil : self
+    }
+}
+
+struct ArticleFeedItemModel: Identifiable {
+    let displayItem: ArticleFeedDisplayItem
+    let isExpanded: Bool
+    let theme: NewsprintTheme
+    let readerFontChoice: ReaderFontChoice
+    let readerFontSize: Int
+    let density: ArticleListDensity
+
+    var article: Article {
+        displayItem.article
+    }
+
+    var hackerNewsMetadata: HackerNewsMetadata? {
+        displayItem.hackerNewsMetadata
+    }
+
+    var metadataText: String {
+        displayItem.metadataText
+    }
+
+    var previewText: String? {
+        displayItem.previewText
+    }
+
+    var id: String {
+        article.id
     }
 }
 

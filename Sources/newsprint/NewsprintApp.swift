@@ -22,6 +22,7 @@ struct NewsprintApp: App {
         if case .ready(let modelContainer) = startupState {
             agentController.bootstrap(container: modelContainer)
         }
+        appDelegate.dashboardController = dashboardController
         configureDockIcon()
     }
 
@@ -143,8 +144,11 @@ struct NewsprintApp: App {
 
 @MainActor
 final class NewsprintAppDelegate: NSObject, NSApplicationDelegate {
+    var dashboardController: NewsprintDashboardController?
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
+        dashboardController?.openDashboardOnLaunch()
     }
 }
 
@@ -166,6 +170,10 @@ final class NewsprintDashboardController: NSObject, NSWindowDelegate {
         maximize(window)
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    func openDashboardOnLaunch() {
+        openDashboard()
     }
 
     private func dashboardWindow() -> NSWindow {

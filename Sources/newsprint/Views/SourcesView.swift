@@ -9,14 +9,16 @@ struct SourcesView: View {
     let sources: [Source]
     let refresh: (Source) -> Void
     let sourceChanged: () -> Void
+    let sourceContentChanged: () -> Void
     @StateObject private var viewModel = SourcesViewModel()
-    @State private var expandedSourceID: UUID?
+    @State private var editingSource: Source?
+    @State private var sourcePendingDelete: Source?
 
     var body: some View {
-        AdminPageShell("Sources") {
-            HStack(alignment: .top) {
-                AdminSectionHeader("Sources", caption: "Add feeds, manage active sources, and import or export your subscriptions.")
-                Spacer()
+        SourcesPageShell(
+            title: "Sources",
+            caption: "Add feeds, manage active sources, and import or export your subscriptions.",
+            headerActions: {
                 HStack {
                     Button("Import OPML", systemImage: "square.and.arrow.down") {
                         viewModel.showingImporter = true
@@ -26,84 +28,39 @@ struct SourcesView: View {
                     }
                 }
                 .buttonStyle(.bordered)
+            },
+            builderContent: {
+                builderContent
+            },
+            tableControls: {
+                tableControls
+            },
+            tableContent: {
+                tableContent
             }
-
-            if let errorMessage = viewModel.errorMessage {
-                Text(errorMessage)
-                    .font(.callout)
-                    .foregroundStyle(.red)
-            }
-
-            ViewThatFits(in: .horizontal) {
-                HStack(alignment: .top, spacing: 14) {
-                    addSourceSurface
-                    hackerNewsSurface
+        )
+        .sheet(item: $editingSource) { source in
+            SourceEditorSheet(
+                source: source,
+                updateTitle: { source, title in
+                    viewModel.updateTitle(source, title: title, context: modelContext, onSourcesChanged: sourceChanged)
+                },
+                updateCategory: { source, category in
+                    viewModel.updateCategory(source, category: category, context: modelContext, onSourcesChanged: sourceChanged)
                 }
-
-                VStack(alignment: .leading, spacing: 14) {
-                    addSourceSurface
-                    hackerNewsSurface
-                }
-            }
-
-            youtubeSurface
-
-            if !viewModel.discoveredFeeds.isEmpty {
-                discoveredFeedsSection
-            }
-
-            if let importPreview = viewModel.importPreview, !importPreview.sources.isEmpty {
-                opmlPreviewSection(importPreview)
-            }
-
-            if let importMessage = viewModel.importMessage {
-                Text(importMessage)
-                    .font(.callout)
-                    .foregroundStyle(theme.metadata)
-            }
-
-            VStack(alignment: .leading, spacing: 14) {
-                AdminSectionHeader("Presets", caption: "Lightweight starting points for common feeds.")
-                presetList
-
-                if let sourceMessage = viewModel.sourceMessage {
-                    Text(sourceMessage)
-                        .font(.callout)
-                        .foregroundStyle(theme.metadata)
-                }
-            }
-
-            if !sources.isEmpty {
-                VStack(alignment: .leading, spacing: 14) {
-                    AdminSectionHeader("Added Sources", caption: "\(sources.count) active records")
-                    LazyVStack(spacing: 10) {
-                        ForEach(sources) { source in
-                            SourceRow(
-                                source: source,
-                                isExpanded: expandedSourceID == source.id,
-                                toggleExpanded: {
-                                    expandedSourceID = expandedSourceID == source.id ? nil : source.id
-                                },
-                                refresh: refresh,
-                                updateTitle: { source, title in
-                                    viewModel.updateTitle(source, title: title, context: modelContext, onSourcesChanged: sourceChanged)
-                                },
-                                updateCategory: { source, category in
-                                    viewModel.updateCategory(source, category: category, context: modelContext, onSourcesChanged: sourceChanged)
-                                },
-                                updateEnabled: { source, enabled in
-                                    viewModel.updateEnabled(source, enabled: enabled, context: modelContext, onSourcesChanged: sourceChanged)
-                                },
-                                deleteSource: { source in
-                                    viewModel.deleteSource(source, context: modelContext, onSourcesChanged: sourceChanged)
-                                    if expandedSourceID == source.id {
-                                        expandedSourceID = nil
-                                    }
-                                }
-                            )
-                        }
+            )
+        }
+        .sheet(isPresented: importPreviewSheetBinding) {
+            if let importPreview = viewModel.importPreview {
+                OPMLPreviewSheet(
+                    importPreview: importPreview,
+                    importSources: {
+                        viewModel.importSources(from: importPreview, context: modelContext, onSourcesChanged: sourceChanged)
+                    },
+                    cancel: {
+                        viewModel.importPreview = nil
                     }
-                }
+                )
             }
         }
         .fileImporter(isPresented: $viewModel.showingImporter, allowedContentTypes: [.opml, .xml]) { result in
@@ -119,41 +76,209 @@ struct SourcesView: View {
                 viewModel.errorMessage = error.localizedDescription
             }
         }
+        .onAppear {
+            viewModel.configureSources(sources)
+        }
+        .onChange(of: sourceConfigurationToken) {
+            viewModel.configureSources(sources)
+        }
+        .confirmationDialog("Delete this source and its articles?", isPresented: sourceDeleteConfirmationBinding) {
+            if let source = sourcePendingDelete {
+                Button("Delete Source", role: .destructive) {
+                    if viewModel.deleteSource(source, context: modelContext, onSourcesChanged: sourceChanged) {
+                        sourceContentChanged()
+                    }
+                    sourcePendingDelete = nil
+                }
+            }
+        }
     }
 
-    private var presetList: some View {
-        AdminSurface {
-            VStack(alignment: .leading, spacing: 0) {
-                HStack(spacing: 14) {
-                    Text("Feed")
-                        .frame(width: 28, alignment: .leading)
-                    Text("Name")
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    Text("Tags")
-                        .frame(width: 360, alignment: .leading)
-                    Text("Added")
-                        .frame(width: 72, alignment: .trailing)
-                }
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(theme.metadata)
-                .padding(.horizontal, 12)
-                .padding(.bottom, 8)
+    @ViewBuilder
+    private var builderContent: some View {
+        if let errorMessage = viewModel.errorMessage {
+            Text(errorMessage)
+                .font(.callout)
+                .foregroundStyle(.red)
+        }
 
-                List(PresetSourceCatalog.all) { preset in
-                    PresetListRow(
-                        preset: preset,
-                        isAdded: isPresetAdded(preset)
-                    ) {
-                        viewModel.addPreset(preset, context: modelContext, onSourcesChanged: sourceChanged)
-                    }
-                    .listRowInsets(EdgeInsets())
-                    .listRowSeparator(.visible)
-                    .listRowBackground(Color.clear)
-                }
-                .listStyle(.plain)
-                .scrollContentBackground(.hidden)
-                .frame(height: min(CGFloat(PresetSourceCatalog.all.count) * 46, 520))
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .top, spacing: 14) {
+                addSourceSurface
+                hackerNewsSurface
             }
+
+            VStack(alignment: .leading, spacing: 14) {
+                addSourceSurface
+                hackerNewsSurface
+            }
+        }
+
+        youtubeSurface
+
+        if !viewModel.discoveredFeeds.isEmpty {
+            discoveredFeedsSection
+        }
+
+        if let importMessage = viewModel.importMessage {
+            Text(importMessage)
+                .font(.callout)
+                .foregroundStyle(theme.metadata)
+        }
+
+        if let sourceMessage = viewModel.sourceMessage {
+            Text(sourceMessage)
+                .font(.callout)
+                .foregroundStyle(theme.metadata)
+        }
+    }
+
+    private var tableControls: some View {
+        HStack(alignment: .center, spacing: 12) {
+            Picker("Section", selection: $viewModel.selectedSection) {
+                ForEach(SourcesPageSection.allCases, id: \.self) { section in
+                    Text(section.displayName).tag(section)
+                }
+            }
+            .pickerStyle(.segmented)
+            .frame(width: 280)
+
+            Text(selectedSectionCaption)
+                .font(.callout)
+                .foregroundStyle(theme.metadata)
+
+            Spacer()
+
+            switch viewModel.selectedSection {
+            case .presets:
+                if let preset = viewModel.selectedPresetRow {
+                    Button(preset.isAdded ? "Added" : "Add Preset", systemImage: preset.isAdded ? "checkmark.circle.fill" : "plus.circle") {
+                        addPreset(preset)
+                    }
+                    .disabled(preset.isAdded)
+                    .buttonStyle(.borderedProminent)
+                }
+            case .addedSources:
+                selectedSourceActions
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var selectedSourceActions: some View {
+        if let source = selectedSource {
+            Button("Edit", systemImage: "pencil") {
+                editingSource = source
+            }
+            Button(source.enabled ? "Pause" : "Enable", systemImage: source.enabled ? "pause.circle" : "checkmark.circle") {
+                viewModel.updateEnabled(source, enabled: !source.enabled, context: modelContext, onSourcesChanged: sourceChanged)
+            }
+            Button("Refresh", systemImage: "arrow.clockwise") {
+                refresh(source)
+            }
+            Button("Delete", systemImage: "trash", role: .destructive) {
+                sourcePendingDelete = source
+            }
+        } else {
+            Button("Edit", systemImage: "pencil") {}
+                .disabled(true)
+            Button("Refresh", systemImage: "arrow.clockwise") {}
+                .disabled(true)
+        }
+    }
+
+    private var selectedSectionCaption: String {
+        switch viewModel.selectedSection {
+        case .presets:
+            "\(viewModel.presetRows.count) presets"
+        case .addedSources:
+            "\(viewModel.sourceRows.count) active records"
+        }
+    }
+
+    @ViewBuilder
+    private var tableContent: some View {
+        switch viewModel.selectedSection {
+        case .presets:
+            PresetsTable(
+                rows: viewModel.presetRows,
+                selection: $viewModel.selectedPresetID,
+                addPreset: addPreset
+            )
+        case .addedSources:
+            AddedSourcesTable(
+                rows: viewModel.sourceRows,
+                selection: $viewModel.selectedSourceID,
+                selectedSource: { id in
+                    sources.first { $0.id == id }
+                },
+                refresh: refresh,
+                edit: { source in
+                    editingSource = source
+                },
+                updateEnabled: { source, enabled in
+                    viewModel.updateEnabled(source, enabled: enabled, context: modelContext, onSourcesChanged: sourceChanged)
+                },
+                deleteSource: { source in
+                    sourcePendingDelete = source
+                }
+            )
+        }
+    }
+
+    private var selectedSource: Source? {
+        viewModel.selectedSource(from: sources)
+    }
+
+    private var importPreviewSheetBinding: Binding<Bool> {
+        Binding(
+            get: { viewModel.importPreview != nil },
+            set: { isPresented in
+                if !isPresented {
+                    viewModel.importPreview = nil
+                }
+            }
+        )
+    }
+
+    private var sourceDeleteConfirmationBinding: Binding<Bool> {
+        Binding(
+            get: { sourcePendingDelete != nil },
+            set: { isPresented in
+                if !isPresented {
+                    sourcePendingDelete = nil
+                }
+            }
+        )
+    }
+
+    private func addPreset(_ row: PresetRowDisplayItem) {
+        viewModel.addPreset(row.preset, context: modelContext, onSourcesChanged: sourceChanged)
+    }
+
+    private var sourceConfigurationToken: [SourceConfigurationToken] {
+        sources.map(SourceConfigurationToken.init(source:))
+    }
+
+    private struct SourceConfigurationToken: Hashable {
+        let id: UUID
+        let title: String
+        let url: URL
+        let kindRawValue: String
+        let enabled: Bool
+        let category: String?
+        let lastSuccessfulFetchAt: Date?
+        let lastErrorMessage: String?
+
+        init(source: Source) {
+            id = source.id
+            title = source.title
+            url = source.url
+            kindRawValue = source.kindRawValue
+            enabled = source.enabled
+            category = source.category
+            lastSuccessfulFetchAt = source.lastSuccessfulFetchAt
+            lastErrorMessage = source.lastErrorMessage
         }
     }
 
@@ -324,10 +449,229 @@ struct SourcesView: View {
         }
     }
 
-    private func isPresetAdded(_ preset: PresetSource) -> Bool {
-        let canonicalPreset = URLCanonicalizer.canonicalize(preset.url).absoluteString
-        return sources.contains {
-            URLCanonicalizer.canonicalize($0.url).absoluteString == canonicalPreset
+}
+
+struct SourcesPageShell<HeaderActions: View, BuilderContent: View, TableControls: View, TableContent: View>: View {
+    @Environment(\.newsprintTheme) private var theme
+    let title: String
+    let caption: String
+    @ViewBuilder let headerActions: HeaderActions
+    @ViewBuilder let builderContent: BuilderContent
+    @ViewBuilder let tableControls: TableControls
+    @ViewBuilder let tableContent: TableContent
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            HStack(alignment: .top, spacing: 16) {
+                AdminSectionHeader(title, caption: caption)
+                Spacer()
+                headerActions
+            }
+
+            VStack(alignment: .leading, spacing: 14) {
+                builderContent
+            }
+            .frame(maxWidth: 1120, alignment: .leading)
+
+            Divider()
+
+            tableControls
+                .frame(maxWidth: 1120, alignment: .leading)
+
+            tableContent
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .padding(.horizontal, 28)
+        .padding(.vertical, 26)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(theme.paneBackground)
+        .navigationTitle(title)
+    }
+}
+
+struct PresetsTable: View {
+    @Environment(\.newsprintTheme) private var theme
+    let rows: [PresetRowDisplayItem]
+    @Binding var selection: String?
+    let addPreset: (PresetRowDisplayItem) -> Void
+
+    var body: some View {
+        Table(rows, selection: $selection) {
+            TableColumn("Feed") { row in
+                Image(systemName: row.iconName)
+                    .foregroundStyle(theme.tint)
+            }
+            .width(48)
+
+            TableColumn("Name") { row in
+                Text(row.title)
+                    .lineLimit(1)
+            }
+
+            TableColumn("Tags") { row in
+                Text(row.tags.joined(separator: " · "))
+                    .foregroundStyle(theme.metadata)
+                    .lineLimit(1)
+            }
+
+            TableColumn("Status") { row in
+                Button {
+                    if !row.isAdded {
+                        addPreset(row)
+                    }
+                } label: {
+                    Label(row.isAdded ? "Added" : "Add", systemImage: row.isAdded ? "checkmark.circle.fill" : "plus.circle")
+                        .labelStyle(.titleAndIcon)
+                }
+                .buttonStyle(.borderless)
+                .foregroundStyle(row.isAdded ? theme.metadata : theme.tint)
+                .disabled(row.isAdded)
+            }
+            .width(96)
+        }
+        .alternatingRowBackgrounds(.enabled)
+        .scrollContentBackground(.hidden)
+        .background(theme.readerSurface.opacity(0.36), in: RoundedRectangle(cornerRadius: 8))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color(nsColor: .separatorColor).opacity(0.20))
+        }
+    }
+}
+
+struct AddedSourcesTable: View {
+    @Environment(\.newsprintTheme) private var theme
+    let rows: [SourceRowDisplayItem]
+    @Binding var selection: UUID?
+    let selectedSource: (UUID) -> Source?
+    let refresh: (Source) -> Void
+    let edit: (Source) -> Void
+    let updateEnabled: (Source, Bool) -> Void
+    let deleteSource: (Source) -> Void
+
+    var body: some View {
+        Table(rows, selection: $selection) {
+            TableColumn("Enabled") { row in
+                Image(systemName: row.enabled ? "checkmark.circle.fill" : "pause.circle")
+                    .foregroundStyle(row.enabled ? theme.tint : theme.metadata)
+                    .help(row.enabled ? "Enabled" : "Paused")
+            }
+            .width(72)
+
+            TableColumn("Name") { row in
+                Label(row.title, systemImage: row.iconName)
+                    .lineLimit(1)
+            }
+
+            TableColumn("Kind") { row in
+                Text(sourceKindText(row))
+                    .foregroundStyle(theme.metadata)
+                    .lineLimit(1)
+            }
+
+            TableColumn("Last Success") { row in
+                Text(row.successText.replacingOccurrences(of: "Success: ", with: ""))
+                    .foregroundStyle(theme.metadata)
+                    .lineLimit(1)
+            }
+
+            TableColumn("Error") { row in
+                Text(row.errorMessage == nil ? "OK" : "Error")
+                    .foregroundStyle(row.errorMessage == nil ? theme.metadata : .red)
+                    .help(row.errorMessage ?? "No recent error")
+            }
+        }
+        .alternatingRowBackgrounds(.enabled)
+        .scrollContentBackground(.hidden)
+        .background(theme.readerSurface.opacity(0.36), in: RoundedRectangle(cornerRadius: 8))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color(nsColor: .separatorColor).opacity(0.20))
+        }
+        .contextMenu(forSelectionType: UUID.self) { selectedIDs in
+            if let id = selectedIDs.first, let source = selectedSource(id) {
+                Button("Edit", systemImage: "pencil") {
+                    edit(source)
+                }
+                Button(source.enabled ? "Pause" : "Enable", systemImage: source.enabled ? "pause.circle" : "checkmark.circle") {
+                    updateEnabled(source, !source.enabled)
+                }
+                Button("Refresh", systemImage: "arrow.clockwise") {
+                    refresh(source)
+                }
+                Divider()
+                Button("Delete", systemImage: "trash", role: .destructive) {
+                    deleteSource(source)
+                }
+            }
+        }
+    }
+
+    private func sourceKindText(_ row: SourceRowDisplayItem) -> String {
+        if let category = row.category {
+            "\(row.kindTitle) · \(category)"
+        } else {
+            row.kindTitle
+        }
+    }
+}
+
+struct OPMLPreviewSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.newsprintTheme) private var theme
+    let importPreview: OPMLImportPreview
+    let importSources: () -> Void
+    let cancel: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(alignment: .top) {
+                AdminSectionHeader("OPML Preview", caption: "\(importPreview.sources.count) sources ready to import")
+                Spacer()
+                Button("Cancel") {
+                    cancel()
+                    dismiss()
+                }
+                Button("Import \(importPreview.sources.count)", systemImage: "tray.and.arrow.down") {
+                    importSources()
+                    dismiss()
+                }
+                .buttonStyle(.borderedProminent)
+            }
+
+            Table(rows) {
+                TableColumn("Name") { row in
+                    Text(row.source.title)
+                        .lineLimit(1)
+                }
+                TableColumn("Feed URL") { row in
+                    Text(row.source.feedURL.absoluteString)
+                        .foregroundStyle(theme.metadata)
+                        .lineLimit(1)
+                        .textSelection(.enabled)
+                }
+                TableColumn("Category") { row in
+                    Text(row.source.category ?? "")
+                        .foregroundStyle(theme.metadata)
+                        .lineLimit(1)
+                }
+            }
+            .alternatingRowBackgrounds(.enabled)
+            .frame(minHeight: 360)
+        }
+        .padding(24)
+        .frame(minWidth: 780, minHeight: 500)
+    }
+
+    private var rows: [OPMLPreviewRow] {
+        importPreview.sources.map(OPMLPreviewRow.init(source:))
+    }
+
+    private struct OPMLPreviewRow: Identifiable {
+        let source: OPMLImportedSource
+
+        var id: URL {
+            source.feedURL
         }
     }
 }
@@ -344,38 +688,37 @@ private extension DiscoveredFeedType {
 
 struct PresetListRow: View {
     @Environment(\.newsprintTheme) private var theme
-    let preset: PresetSource
-    let isAdded: Bool
+    let row: PresetRowDisplayItem
     let add: () -> Void
 
     var body: some View {
         Button {
-            if !isAdded {
+            if !row.isAdded {
                 add()
             }
         } label: {
             HStack(spacing: 14) {
-                Image(systemName: iconName)
+                Image(systemName: row.iconName)
                     .font(.title3.weight(.semibold))
                     .foregroundStyle(theme.tint)
                     .frame(width: 28, alignment: .leading)
 
-                Text(preset.title)
+                Text(row.title)
                     .font(.headline)
                     .foregroundStyle(.primary)
                     .lineLimit(1)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
                 HStack(spacing: 6) {
-                    ForEach(displayTags, id: \.self) { tag in
+                    ForEach(row.tags, id: \.self) { tag in
                         PillTag(title: tag)
                     }
                 }
                 .frame(width: 360, alignment: .leading)
 
-                Image(systemName: isAdded ? "checkmark.circle.fill" : "plus.circle")
+                Image(systemName: row.isAdded ? "checkmark.circle.fill" : "plus.circle")
                     .font(.title3.weight(.semibold))
-                    .foregroundStyle(isAdded ? theme.tint : theme.metadata)
+                    .foregroundStyle(row.isAdded ? theme.tint : theme.metadata)
                     .frame(width: 72, alignment: .trailing)
             }
             .padding(.horizontal, 12)
@@ -384,124 +727,67 @@ struct PresetListRow: View {
             .background(rowBackground, in: RoundedRectangle(cornerRadius: 7))
         }
         .buttonStyle(.plain)
-        .disabled(isAdded)
-    }
-
-    private var iconName: String {
-        switch preset.kind {
-        case .hackerNews:
-            "text.bubble"
-        case .youtube:
-            "play.rectangle"
-        case .rss, .atom, .jsonFeed, .blog:
-            "dot.radiowaves.left.and.right"
-        }
-    }
-
-    private var displayTags: [String] {
-        var tags: [String] = []
-        for tag in [preset.category, preset.kind.displayName] {
-            guard !tags.contains(tag) else {
-                continue
-            }
-            tags.append(tag)
-        }
-        return tags
+        .disabled(row.isAdded)
     }
 
     private var rowBackground: Color {
-        isAdded ? theme.tint.opacity(0.10) : Color.clear
+        row.isAdded ? theme.tint.opacity(0.10) : Color.clear
     }
 }
 
-private struct SourceRow: View {
+private struct SourceListRow: View {
     @Environment(\.newsprintTheme) private var theme
     let source: Source
-    let isExpanded: Bool
-    let toggleExpanded: () -> Void
+    let displayItem: SourceRowDisplayItem
     let refresh: (Source) -> Void
-    let updateTitle: (Source, String) -> Void
-    let updateCategory: (Source, String) -> Void
+    let edit: () -> Void
     let updateEnabled: (Source, Bool) -> Void
     let deleteSource: (Source) -> Void
     @State private var isConfirmingDelete = false
-    @State private var draftTitle = ""
-    @State private var draftCategory = ""
 
     var body: some View {
-        AdminSurface {
-            VStack(alignment: .leading, spacing: 12) {
-                collapsedRow
-
-                ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 10) {
-                        sourceMetadata
-                    }
-                    VStack(alignment: .leading, spacing: 8) {
-                        sourceMetadata
-                    }
-                }
-
-                if isExpanded {
-                    Divider()
-                    editor
-                }
-
-                if let error = source.lastErrorMessage {
-                    Text("Last error: \(error)")
-                        .font(.caption)
-                        .foregroundStyle(.red)
-                }
-            }
-        }
-        .onAppear(perform: syncDrafts)
-        .onChange(of: isExpanded) {
-            if isExpanded {
-                syncDrafts()
-            }
-        }
-        .confirmationDialog("Delete this source and its articles?", isPresented: $isConfirmingDelete) {
-            Button("Delete Source", role: .destructive) {
-                deleteSource(source)
-            }
-        }
-    }
-
-    private var collapsedRow: some View {
         HStack(alignment: .center, spacing: 12) {
-            Button(action: toggleExpanded) {
-                HStack(alignment: .center, spacing: 10) {
-                    Image(systemName: source.kind == .hackerNews ? "text.bubble" : "dot.radiowaves.left.and.right")
-                        .font(.title3.weight(.semibold))
-                        .foregroundStyle(theme.tint)
-                        .frame(width: 24)
+            Image(systemName: displayItem.iconName)
+                .font(.title3.weight(.semibold))
+                .foregroundStyle(theme.tint)
+                .frame(width: 26)
 
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(source.title)
-                            .font(.headline)
-                            .foregroundStyle(.primary)
-                        Text(source.url.absoluteString)
-                            .font(.caption)
-                            .foregroundStyle(theme.metadata)
-                            .lineLimit(1)
-                            .textSelection(.enabled)
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 8) {
+                    Text(displayItem.title)
+                        .font(.headline)
+                        .lineLimit(1)
+                    PillTag(title: displayItem.kindTitle)
+                    if let category = displayItem.category {
+                        PillTag(title: category)
                     }
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
 
-            Button(source.enabled ? "Enabled" : "Paused", systemImage: source.enabled ? "checkmark.circle.fill" : "pause.circle") {
+                HStack(spacing: 10) {
+                    Text(displayItem.urlString)
+                        .lineLimit(1)
+                    Text(displayItem.successText)
+                        .lineLimit(1)
+                    if let error = displayItem.errorMessage {
+                        Text("Error")
+                            .foregroundStyle(.red)
+                            .help(error)
+                    }
+                }
+                .font(.caption)
+                .foregroundStyle(theme.metadata)
+            }
+
+            Spacer(minLength: 12)
+
+            Button(displayItem.enabled ? "Enabled" : "Paused", systemImage: displayItem.enabled ? "checkmark.circle.fill" : "pause.circle") {
                 updateEnabled(source, !source.enabled)
             }
             .buttonStyle(.borderless)
-            .foregroundStyle(source.enabled ? theme.tint : theme.metadata)
+            .foregroundStyle(displayItem.enabled ? theme.tint : theme.metadata)
 
-            Button(isExpanded ? "Done" : "Edit", systemImage: isExpanded ? "checkmark" : "pencil") {
-                toggleExpanded()
-            }
-            .buttonStyle(.borderless)
+            Button("Edit", systemImage: "pencil", action: edit)
+                .buttonStyle(.borderless)
 
             Button("Refresh", systemImage: "arrow.clockwise") {
                 refresh(source)
@@ -513,45 +799,57 @@ private struct SourceRow: View {
             }
             .buttonStyle(.borderless)
         }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        .contentShape(Rectangle())
+        .confirmationDialog("Delete this source and its articles?", isPresented: $isConfirmingDelete) {
+            Button("Delete Source", role: .destructive) {
+                deleteSource(source)
+            }
+        }
     }
+}
 
-    private var editor: some View {
-        VStack(alignment: .leading, spacing: 10) {
+struct SourceEditorSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let source: Source
+    let updateTitle: (Source, String) -> Void
+    let updateCategory: (Source, String) -> Void
+    @State private var draftTitle = ""
+    @State private var draftCategory = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            AdminSectionHeader("Edit Source", caption: source.url.absoluteString)
+
             TextField("Title", text: $draftTitle)
                 .textFieldStyle(.roundedBorder)
             TextField("Category", text: $draftCategory)
                 .textFieldStyle(.roundedBorder)
+
             HStack {
                 Spacer()
-                Button("Save Changes", systemImage: "checkmark.circle") {
+                Button("Cancel") {
+                    dismiss()
+                }
+                Button("Save", systemImage: "checkmark.circle") {
                     saveDrafts()
+                    dismiss()
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(!hasDraftChanges)
             }
         }
-    }
-
-    private var sourceMetadata: some View {
-        Group {
-            PillTag(title: source.kind.displayName)
-            if let category = source.category, !category.isEmpty {
-                PillTag(title: category)
-            }
-            Text("Last fetch: \(source.lastFetchedAt?.formatted(date: .abbreviated, time: .shortened) ?? "Never")")
-            Text("Last success: \(source.lastSuccessfulFetchAt?.formatted(date: .abbreviated, time: .shortened) ?? "Never")")
+        .padding(24)
+        .frame(width: 460)
+        .onAppear {
+            draftTitle = source.title
+            draftCategory = source.category ?? ""
         }
-        .font(.caption)
-        .foregroundStyle(theme.metadata)
     }
 
     private var hasDraftChanges: Bool {
         draftTitle != source.title || draftCategory != (source.category ?? "")
-    }
-
-    private func syncDrafts() {
-        draftTitle = source.title
-        draftCategory = source.category ?? ""
     }
 
     private func saveDrafts() {

@@ -23,6 +23,50 @@ final class SourcesViewModel: ObservableObject {
     @Published var showingImporter = false
     @Published var showingExporter = false
     @Published var exportDocument = TextFileDocument()
+    @Published var selectedSection: SourcesPageSection = .presets
+    @Published var selectedSourceID: UUID?
+    @Published var selectedPresetID: String?
+    @Published private(set) var sourceRows: [SourceRowDisplayItem] = []
+    @Published private(set) var presetRows: [PresetRowDisplayItem] = SourceDisplayItemBuilder.presetRows(for: [])
+
+    func configureSources(_ sources: [Source]) {
+        sourceRows = SourceDisplayItemBuilder.sourceRows(for: sources)
+        presetRows = SourceDisplayItemBuilder.presetRows(for: sources)
+        pruneMissingSelections()
+    }
+
+    var selectedPresetRow: PresetRowDisplayItem? {
+        SourcesSelectionState(
+            selectedSection: selectedSection,
+            selectedSourceID: selectedSourceID,
+            selectedPresetID: selectedPresetID
+        )
+        .selectedPresetRow(in: presetRows)
+    }
+
+    var selectedSourceRow: SourceRowDisplayItem? {
+        SourcesSelectionState(
+            selectedSection: selectedSection,
+            selectedSourceID: selectedSourceID,
+            selectedPresetID: selectedPresetID
+        )
+        .selectedSourceRow(in: sourceRows)
+    }
+
+    func selectedSource(from sources: [Source]) -> Source? {
+        guard let selectedSourceID else { return nil }
+        return sources.first { $0.id == selectedSourceID }
+    }
+
+    func selectPreset(_ row: PresetRowDisplayItem) {
+        selectedPresetID = row.id
+        selectedSection = .presets
+    }
+
+    func selectSource(_ row: SourceRowDisplayItem) {
+        selectedSourceID = row.id
+        selectedSection = .addedSources
+    }
 
     func addSource(context: ModelContext, onSourcesChanged: () -> Void) async {
         let trimmedURL = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -127,15 +171,18 @@ final class SourcesViewModel: ObservableObject {
         updateSource(source, title: source.title, category: source.category, enabled: enabled, context: context, onSourcesChanged: onSourcesChanged)
     }
 
-    func deleteSource(_ source: Source, context: ModelContext, onSourcesChanged: () -> Void) {
+    @discardableResult
+    func deleteSource(_ source: Source, context: ModelContext, onSourcesChanged: () -> Void) -> Bool {
         do {
             try SwiftDataSourceRepository(context: context).delete(source)
             sourceMessage = "Deleted \(source.title)."
             errorMessage = nil
             onSourcesChanged()
+            return true
         } catch {
             errorMessage = "Could not delete source: \(error.localizedDescription)"
             sourceMessage = nil
+            return false
         }
     }
 
@@ -235,6 +282,17 @@ final class SourcesViewModel: ObservableObject {
 
     private func saveSource(_ source: Source, context: ModelContext) throws -> Bool {
         try SwiftDataSourceRepository(context: context).saveIfNew(source)
+    }
+
+    private func pruneMissingSelections() {
+        var selection = SourcesSelectionState(
+            selectedSection: selectedSection,
+            selectedSourceID: selectedSourceID,
+            selectedPresetID: selectedPresetID
+        )
+        selection.pruneMissingSelections(sourceRows: sourceRows, presetRows: presetRows)
+        selectedSourceID = selection.selectedSourceID
+        selectedPresetID = selection.selectedPresetID
     }
 
     private func hackerNewsConfiguration(reportErrors: Bool) -> HackerNewsFeedConfiguration? {

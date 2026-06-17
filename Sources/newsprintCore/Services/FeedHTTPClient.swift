@@ -21,11 +21,18 @@ public enum FeedHTTPError: Error, LocalizedError {
     }
 }
 
-@MainActor
-public struct FeedHTTPClient {
-    public init() {}
+public struct FeedHTTPClient: @unchecked Sendable {
+    private let session: URLSession
+
+    public init(session: URLSession = .shared) {
+        self.session = session
+    }
 
     public func fetch(source: Source) async throws -> FeedHTTPResponse {
+        try await fetch(source: SourceSnapshot(source: source))
+    }
+
+    public func fetch(source: SourceSnapshot) async throws -> FeedHTTPResponse {
         try await fetch(url: source.url, etag: source.etag, lastModified: source.lastModified)
     }
 
@@ -46,7 +53,7 @@ public struct FeedHTTPClient {
             request.setValue(lastModified, forHTTPHeaderField: "If-Modified-Since")
         }
 
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await session.data(for: request)
         guard let httpResponse = response as? HTTPURLResponse else {
             throw FeedHTTPError.invalidResponse
         }

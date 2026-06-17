@@ -26,11 +26,44 @@ public struct RuleResult: Sendable, Equatable {
     }
 }
 
-@MainActor
+public struct RuleDefinition: Sendable, Equatable {
+    public let id: UUID
+    public let target: RuleTarget
+    public let matchMode: RuleMatchMode
+    public let pattern: String
+    public let action: RuleAction
+    public let actionValue: String?
+    public let enabled: Bool
+    public let priority: Int
+    public let createdAt: Date
+
+    public init(
+        id: UUID,
+        target: RuleTarget,
+        matchMode: RuleMatchMode,
+        pattern: String,
+        action: RuleAction,
+        actionValue: String?,
+        enabled: Bool,
+        priority: Int,
+        createdAt: Date
+    ) {
+        self.id = id
+        self.target = target
+        self.matchMode = matchMode
+        self.pattern = pattern
+        self.action = action
+        self.actionValue = actionValue
+        self.enabled = enabled
+        self.priority = priority
+        self.createdAt = createdAt
+    }
+}
+
 public struct RuleEngine {
     public init() {}
 
-    public func apply(rules: [FilterRule], to draft: ArticleDraft) -> RuleResult {
+    public func apply(rules: [RuleDefinition], to draft: ArticleDraft) -> RuleResult {
         var result = RuleResult()
 
         for rule in rules.sorted(by: ruleSort).filter(\.enabled) {
@@ -64,10 +97,17 @@ public struct RuleEngine {
         return result
     }
 
+    @MainActor
+    public func apply(rules: [FilterRule], to draft: ArticleDraft) -> RuleResult {
+        apply(rules: rules.map(RuleDefinition.init(rule:)), to: draft)
+    }
+
+    @MainActor
     public func reapply(rules: [FilterRule], context: ModelContext) throws {
+        let definitions = rules.map(RuleDefinition.init(rule:))
         let articles = try context.fetch(FetchDescriptor<Article>())
         for article in articles {
-            let result = apply(rules: rules, to: ArticleDraft(article: article))
+            let result = apply(rules: definitions, to: ArticleDraft(article: article))
             article.score = result.scoreDelta
             article.tagNames = result.tags
             article.matchedRuleIDs = result.matchedRuleIDs.map(\.uuidString)
@@ -78,7 +118,7 @@ public struct RuleEngine {
         try context.save()
     }
 
-    private func matches(rule: FilterRule, draft: ArticleDraft, existingTags: [String]) -> Bool {
+    private func matches(rule: RuleDefinition, draft: ArticleDraft, existingTags: [String]) -> Bool {
         let targetText = text(for: rule.target, in: draft, existingTags: existingTags).lowercased()
         let pattern = rule.pattern.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !pattern.isEmpty else { return false }
@@ -112,11 +152,27 @@ public struct RuleEngine {
         }
     }
 
-    private func ruleSort(_ lhs: FilterRule, _ rhs: FilterRule) -> Bool {
+    private func ruleSort(_ lhs: RuleDefinition, _ rhs: RuleDefinition) -> Bool {
         if lhs.priority == rhs.priority {
             return lhs.createdAt < rhs.createdAt
         }
         return lhs.priority < rhs.priority
+    }
+}
+
+public extension RuleDefinition {
+    init(rule: FilterRule) {
+        self.init(
+            id: rule.id,
+            target: rule.target,
+            matchMode: rule.matchMode,
+            pattern: rule.pattern,
+            action: rule.action,
+            actionValue: rule.actionValue,
+            enabled: rule.enabled,
+            priority: rule.priority,
+            createdAt: rule.createdAt
+        )
     }
 }
 
@@ -137,4 +193,3 @@ private extension ArticleDraft {
         )
     }
 }
-

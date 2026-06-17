@@ -18,6 +18,10 @@ public struct FeedParser {
     public init() {}
 
     public func parse(data: Data, source: Source) throws -> [ArticleDraft] {
+        try parse(data: data, source: SourceSnapshot(source: source))
+    }
+
+    public func parse(data: Data, source: SourceSnapshot) throws -> [ArticleDraft] {
         if source.kind == .jsonFeed || data.firstNonWhitespaceByte == UInt8(ascii: "{") {
             return try parseJSONFeed(data: data, source: source)
         }
@@ -37,7 +41,7 @@ public struct FeedParser {
         throw FeedParserError.unsupportedFormat
     }
 
-    private func parseJSONFeed(data: Data, source: Source) throws -> [ArticleDraft] {
+    private func parseJSONFeed(data: Data, source: SourceSnapshot) throws -> [ArticleDraft] {
         guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               let items = root["items"] as? [[String: Any]] else {
             throw FeedParserError.invalidJSONFeed
@@ -73,7 +77,7 @@ public struct FeedParser {
         }
     }
 
-    private func parseXML(data: Data, source: Source, format: XMLFeedFormat) throws -> [ArticleDraft] {
+    private func parseXML(data: Data, source: SourceSnapshot, format: XMLFeedFormat) throws -> [ArticleDraft] {
         let delegate = FeedXMLParserDelegate(source: source, format: format)
         let parser = XMLParser(data: data)
         parser.delegate = delegate
@@ -95,7 +99,7 @@ private enum XMLFeedFormat {
 }
 
 private final class FeedXMLParserDelegate: NSObject, XMLParserDelegate {
-    let source: Source
+    let source: SourceSnapshot
     let format: XMLFeedFormat
     var drafts: [ArticleDraft] = []
     private var currentItem: [String: String]?
@@ -104,7 +108,7 @@ private final class FeedXMLParserDelegate: NSObject, XMLParserDelegate {
     private var atomLinkHref: String?
     private var insideAuthor = false
 
-    init(source: Source, format: XMLFeedFormat) {
+    init(source: SourceSnapshot, format: XMLFeedFormat) {
         self.source = source
         self.format = format
     }

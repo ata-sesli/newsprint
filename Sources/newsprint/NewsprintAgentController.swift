@@ -11,6 +11,7 @@ final class NewsprintAgentController: ObservableObject {
     @Published private(set) var menuBarIconRawValue: String
 
     private var modelContext: ModelContext?
+    private var refreshActor: FeedRefreshActor?
     private var refreshLoopTask: Task<Void, Never>?
     private var didBootstrap = false
 
@@ -30,6 +31,7 @@ final class NewsprintAgentController: ObservableObject {
 
         let context = ModelContext(container)
         modelContext = context
+        refreshActor = FeedRefreshActor(modelContainer: container)
 
         do {
             let settings = try SettingsRepository.loadOrCreate(in: context)
@@ -40,9 +42,9 @@ final class NewsprintAgentController: ObservableObject {
         }
     }
 
-    func refreshAll() {
+    func refreshAll(origin: FeedRefreshOrigin = .manual) {
         guard !isRefreshing else { return }
-        guard let modelContext else {
+        guard let refreshActor else {
             statusMessage = "Newsprint data store is not ready."
             return
         }
@@ -51,11 +53,35 @@ final class NewsprintAgentController: ObservableObject {
         statusMessage = "Refreshing feeds..."
 
         Task { @MainActor in
-            await FeedRefreshService(context: modelContext).refreshAll()
+            let summary = await refreshActor.refreshAll()
+            NotificationCenter.default.post(
+                name: .newsprintDataChanged,
+                object: FeedRefreshEvent(summary: summary, origin: origin)
+            )
             lastRefreshAt = Date()
             isRefreshing = false
-            statusMessage = nil
-            NotificationCenter.default.post(name: .newsprintDataChanged, object: nil)
+            statusMessage = summary.failedCount > 0
+                ? "Refresh finished with \(summary.failedCount) failed source\(summary.failedCount == 1 ? "" : "s")."
+                : nil
+        }
+    }
+
+    func refresh(sourceID: UUID) {
+        guard !isRefreshing else { return }
+        guard let refreshActor else {
+            statusMessage = "Newsprint data store is not ready."
+            return
+        }
+
+        isRefreshing = true
+        statusMessage = "Refreshing source..."
+
+        Task { @MainActor in
+            let summary = await refreshActor.refresh(sourceID: sourceID)
+            NotificationCenter.default.post(name: .newsprintDataChanged, object: summary)
+            lastRefreshAt = Date()
+            isRefreshing = false
+            statusMessage = summary.errorMessage
         }
     }
 
@@ -69,7 +95,7 @@ final class NewsprintAgentController: ObservableObject {
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(minutes * 60))
                 if !Task.isCancelled {
-                    refreshAll()
+                    refreshAll(origin: .automatic)
                 }
             }
         }
