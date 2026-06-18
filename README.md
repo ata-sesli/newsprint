@@ -304,7 +304,9 @@ Important services:
 - `FeedHTTPClient`
 - `FeedParser`
 - `FeedDiscoveryService`
-- `FeedRefreshService`
+- `FeedRefreshActor`
+- `ArticleFeedReadActor`
+- `FeedRefreshApplicationPolicy`
 - `RuleEngine`
 - `RetentionEngine`
 - `ArticleSearchService`
@@ -327,6 +329,7 @@ Important utilities:
 
 - `URLCanonicalizer`
 - `ArticleIDGenerator`
+- `ArticleRenderWindow`
 - `DateParser`
 - `HTMLTextExtractor`
 - `HackerNewsMetadata`
@@ -387,8 +390,9 @@ Newsprint is packaged as an `LSUIElement` menu bar app.
 Cold boot behavior:
 
 - Shows a menu bar item.
-- Does not show a Dock icon.
-- Does not open the dashboard window automatically.
+- Opens the dashboard window automatically.
+- Shows a Dock icon while the dashboard is open.
+- Hides the Dock icon after the dashboard window is closed.
 
 Menu actions:
 
@@ -400,7 +404,7 @@ Menu actions:
 
 Dashboard behavior:
 
-- Opens on demand from the menu bar.
+- Opens on launch and can be reopened from the menu bar.
 - Uses an instant maximized window instead of native macOS full-screen animation.
 - Closing the dashboard hides it instead of quitting the app.
 - Background refresh continues while the dashboard is closed.
@@ -420,13 +424,15 @@ Reasons:
 - Real AppKit item reuse.
 - Better control over scrolling.
 - Better behavior with large feeds.
-- Measured-height caching for article cards.
+- Fixed-height native collapsed cards.
+- Measured-height caching only for expanded article cards.
 
 The app also avoids loading the whole database into the feed:
 
-- The active feed path uses paged SwiftData fetches.
+- The active feed path uses off-main SwiftData snapshot fetches.
 - Default page size is 750 articles.
-- Additional pages load near the end of the current page.
+- A 50/50/50 render window exposes about 150 articles to the collection view at a time.
+- Additional pages load asynchronously near the end of the current page.
 - Counts and tags are fetched separately.
 
 Refresh persistence is batched:
@@ -459,8 +465,11 @@ log stream --predicate 'subsystem == "Newsprint" && category == "startup"' --inf
 
 ```sh
 brew tap ata-sesli/newsprint
+brew trust --tap ata-sesli/newsprint
 brew install --cask newsprint
 ```
+
+Homebrew requires explicit trust for non-official taps before it loads their casks. The trust step is separate from macOS Gatekeeper/quarantine handling.
 
 Upgrade:
 
@@ -535,7 +544,11 @@ This builds the app, zips it, updates the cask version and checksum, tags the cu
 ├── Tests
 │   └── newsprintTests
 ├── scripts
-│   └── build-release-app.sh
+│   ├── build-release-app.sh
+│   ├── package-release.sh
+│   └── publish-release.sh
+├── packaging
+│   └── homebrew
 ├── Package.swift
 ├── rss-plan.md
 ├── rss-completion-report.md
