@@ -74,6 +74,7 @@ public final class Article {
 
     public convenience init(draft: ArticleDraft, ruleResult: RuleResult, fetchedAt: Date = Date()) {
         let canonicalURL = URLCanonicalizer.canonicalize(draft.url)
+        let engagementScore = HackerNewsMetadata(text: draft.contentText ?? draft.excerpt)?.engagementScore ?? 0
         self.init(
             id: ArticleIDGenerator.id(for: draft),
             sourceID: draft.sourceID,
@@ -91,7 +92,7 @@ public final class Article {
             isRead: ruleResult.isRead,
             isStarred: ruleResult.isStarred,
             isHidden: ruleResult.isHidden,
-            score: ruleResult.scoreDelta,
+            score: ruleResult.isHidden ? 0 : engagementScore + ruleResult.scoreDelta,
             matchedRuleIDs: ruleResult.matchedRuleIDs.map(\.uuidString),
             tagNames: ruleResult.tags
         )

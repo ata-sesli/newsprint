@@ -42,7 +42,7 @@ Newsprint supports:
 - JSON Feed.
 - Homepage/blog feed discovery.
 - YouTube channel feeds by channel ID or feed URL.
-- Hacker News feeds through a dedicated HNRSS source builder.
+- Hacker News feeds through a dedicated official Firebase API source builder.
 - Preset technical sources from the local catalog.
 - OPML import and export.
 
@@ -58,26 +58,21 @@ Source records keep fetch metadata:
 
 ### Hacker News
 
-Hacker News is handled as a first-class source type through HNRSS.
+Hacker News is handled as a first-class source type through the official Hacker News Firebase API.
 
 The HN source builder can create feeds for:
 
 - Front Page
 - Newest
 - Best
-- Active
 - Show HN
 - Ask HN
 - Jobs
-- Launches
-- Classic
-- Who is Hiring
 
 It also supports tuning:
 
 - Minimum points.
 - Minimum comments.
-- Search query.
 - Item count.
 
 HN articles get special treatment in the feed:
@@ -166,8 +161,8 @@ Rule behavior:
 
 - Rules have priorities.
 - Enabled rules are applied in priority order.
-- Rule-derived score, tags, and matched rule IDs can be recalculated with "Reapply Rules".
-- Manual article state is preserved during rule reapplication.
+- Rule changes apply to newly fetched articles.
+- Existing articles keep their current manual state unless you clean Home and fetch them again.
 
 ### Search and Filtering
 
@@ -565,7 +560,7 @@ The test suite covers:
 - Article ID generation.
 - HTML text extraction.
 - HN metadata parsing.
-- HNRSS URL building.
+- Hacker News Firebase API URL building and legacy HNRSS source parsing.
 - Rule engine behavior.
 - Retention cleanup.
 - Article repositories.

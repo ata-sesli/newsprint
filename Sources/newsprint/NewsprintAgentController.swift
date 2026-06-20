@@ -55,7 +55,11 @@ final class NewsprintAgentController: ObservableObject {
         statusMessage = "Refreshing feeds..."
 
         Task { @MainActor in
-            let summary = await refreshActor.refreshAll()
+            let summary = await refreshActor.refreshAll { [weak self] phase in
+                await MainActor.run {
+                    self?.statusMessage = phase.statusMessage
+                }
+            }
             NotificationCenter.default.post(
                 name: .newsprintDataChanged,
                 object: FeedRefreshEvent(summary: summary, origin: origin)

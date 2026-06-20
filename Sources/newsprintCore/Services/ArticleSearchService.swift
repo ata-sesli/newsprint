@@ -16,6 +16,13 @@ public enum ArticleFeedSort: String, Codable, CaseIterable, Sendable, Identifiab
     }
 }
 
+public enum ArticleFeedKindFilter: String, Codable, CaseIterable, Sendable, Identifiable {
+    case all
+    case hackerNews
+
+    public var id: String { rawValue }
+}
+
 public enum ArticleFilter: Hashable, Sendable {
     case inbox
     case unread
@@ -34,6 +41,8 @@ public struct ArticleSearchService {
         filter: ArticleFilter,
         searchText: String,
         sort: ArticleFeedSort = .hot,
+        kindFilter: ArticleFeedKindFilter = .all,
+        sourceKindsByID: [UUID: SourceKind] = [:],
         now: Date = Date()
     ) -> [Article] {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -44,11 +53,27 @@ public struct ArticleSearchService {
                 matches(filter: filter, article: article, startOfToday: startOfToday)
             }
             .filter { article in
+                matches(kindFilter: kindFilter, article: article, sourceKindsByID: sourceKindsByID)
+            }
+            .filter { article in
                 query.isEmpty || searchableText(for: article).contains(query)
             }
             .sorted { lhs, rhs in
                 sortArticles(lhs, rhs, sort: sort)
             }
+    }
+
+    private func matches(
+        kindFilter: ArticleFeedKindFilter,
+        article: Article,
+        sourceKindsByID: [UUID: SourceKind]
+    ) -> Bool {
+        switch kindFilter {
+        case .all:
+            return true
+        case .hackerNews:
+            return sourceKindsByID[article.sourceID] == .hackerNews
+        }
     }
 
     private func matches(filter: ArticleFilter, article: Article, startOfToday: Date) -> Bool {

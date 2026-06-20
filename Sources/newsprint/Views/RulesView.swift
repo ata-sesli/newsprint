@@ -25,16 +25,11 @@ struct RulesView: View {
 
                 Spacer()
 
-                HStack {
-                    Button("Reapply Rules", systemImage: "arrow.triangle.2.circlepath") {
-                        reapplyRules()
-                    }
-                    Button("Add Rule", systemImage: "plus") {
-                        addRule()
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(!canAddRule)
+                Button("Add Rule", systemImage: "plus") {
+                    addRule()
                 }
+                .buttonStyle(.borderedProminent)
+                .disabled(!canAddRule)
             }
 
             if let errorMessage {
@@ -69,7 +64,7 @@ struct RulesView: View {
                 } else {
                     LazyVStack(spacing: 12) {
                         ForEach(rules) { rule in
-                            RuleRow(rule: rule, saveAndReapply: saveAndReapply, delete: deleteRule)
+                            RuleRow(rule: rule, saveRule: saveRule, delete: deleteRule)
                         }
                     }
                 }
@@ -140,7 +135,7 @@ struct RulesView: View {
             priority: priority
         )
         modelContext.insert(rule)
-        saveAndReapply()
+        saveRule()
         name = ""
         pattern = ""
         actionValue = ""
@@ -151,19 +146,9 @@ struct RulesView: View {
         actionValue.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
     }
 
-    private func saveAndReapply() {
+    private func saveRule() {
         do {
             try modelContext.save()
-            try SwiftDataRuleRepository(context: modelContext).reapplyEnabledRules()
-            errorMessage = nil
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-    }
-
-    private func reapplyRules() {
-        do {
-            try SwiftDataRuleRepository(context: modelContext).reapplyEnabledRules()
             errorMessage = nil
         } catch {
             errorMessage = error.localizedDescription
@@ -173,7 +158,6 @@ struct RulesView: View {
     private func deleteRule(_ rule: FilterRule) {
         do {
             try SwiftDataRuleRepository(context: modelContext).delete(rule)
-            try SwiftDataRuleRepository(context: modelContext).reapplyEnabledRules()
             errorMessage = nil
         } catch {
             errorMessage = error.localizedDescription
@@ -184,7 +168,7 @@ struct RulesView: View {
 private struct RuleRow: View {
     @Environment(\.newsprintTheme) private var theme
     let rule: FilterRule
-    let saveAndReapply: () -> Void
+    let saveRule: () -> Void
     let delete: (FilterRule) -> Void
 
     var body: some View {
@@ -235,7 +219,7 @@ private struct RuleRow: View {
                 set: { value in
                     rule.target = value
                     rule.updatedAt = Date()
-                    saveAndReapply()
+                    saveRule()
                 }
             )) {
                 ForEach(RuleTarget.allCases) { target in
@@ -248,7 +232,7 @@ private struct RuleRow: View {
                 set: { value in
                     rule.matchMode = value
                     rule.updatedAt = Date()
-                    saveAndReapply()
+                    saveRule()
                 }
             )) {
                 ForEach(RuleMatchMode.allCases) { mode in
@@ -261,7 +245,7 @@ private struct RuleRow: View {
                 set: { value in
                     rule.action = value
                     rule.updatedAt = Date()
-                    saveAndReapply()
+                    saveRule()
                 }
             )) {
                 ForEach(RuleAction.allCases) { action in
@@ -278,7 +262,7 @@ private struct RuleRow: View {
             set: { value in
                 rule[keyPath: keyPath] = value
                 rule.updatedAt = Date()
-                saveAndReapply()
+                saveRule()
             }
         )
     }
@@ -289,7 +273,7 @@ private struct RuleRow: View {
             set: { value in
                 rule[keyPath: keyPath] = value.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
                 rule.updatedAt = Date()
-                saveAndReapply()
+                saveRule()
             }
         )
     }

@@ -14,6 +14,7 @@ struct ArticleFeedView: View {
     @Binding var selection: SidebarSelection
     @Binding var searchText: String
     @Binding var feedSort: ArticleFeedSort
+    @Binding var feedKindFilter: ArticleFeedKindFilter
     var searchFocused: FocusState<Bool>.Binding
     @Binding var expandedArticleID: String?
     @Binding var focusedArticleID: String?
@@ -62,6 +63,7 @@ struct ArticleFeedView: View {
                 selection: $selection,
                 searchText: $searchText,
                 feedSort: $feedSort,
+                feedKindFilter: $feedKindFilter,
                 isPreviewCollapsed: $isPreviewCollapsed,
                 isRefreshing: isRefreshing,
                 searchFocused: searchFocused,
@@ -437,6 +439,7 @@ struct FeedControlHeader: View {
     @Binding var selection: SidebarSelection
     @Binding var searchText: String
     @Binding var feedSort: ArticleFeedSort
+    @Binding var feedKindFilter: ArticleFeedKindFilter
     @Binding var isPreviewCollapsed: Bool
     let isRefreshing: Bool
     var searchFocused: FocusState<Bool>.Binding
@@ -584,6 +587,21 @@ struct FeedControlHeader: View {
 
             sourcePicker
 
+            Button {
+                if feedKindFilter == .hackerNews {
+                    feedKindFilter = .all
+                } else {
+                    if case .source = selection {
+                        selection = .inbox
+                    }
+                    feedKindFilter = .hackerNews
+                }
+            } label: {
+                chipLabel("HN", systemImage: "text.bubble")
+            }
+            .buttonStyle(FilterChipButtonStyle(isSelected: feedKindFilter == .hackerNews))
+            .help(feedKindFilter == .hackerNews ? "Show all sources" : "Show Hacker News")
+
             if let contextualFilter {
                 HStack(spacing: 6) {
                     Label(contextualFilter, systemImage: "line.3.horizontal.decrease.circle")
@@ -619,19 +637,22 @@ struct FeedControlHeader: View {
     }
 
     private var sourcePicker: some View {
-        Menu {
+        let homeSources = SourceDisplayItemBuilder.homeSourceRows(for: sources)
+        return Menu {
             Button {
+                feedKindFilter = .all
                 selection = .inbox
             } label: {
                 Label("All Sources", systemImage: "tray")
             }
 
-            if !sources.isEmpty {
+            if !homeSources.isEmpty {
                 Divider()
             }
 
-            ForEach(sources) { source in
+            ForEach(homeSources) { source in
                 Button {
+                    feedKindFilter = .all
                     selection = .source(source.id)
                 } label: {
                     Label(
@@ -699,7 +720,7 @@ struct FeedControlHeader: View {
 
     private var sourcePickerTitle: String {
         guard case .source(let id) = selection,
-              let source = sources.first(where: { $0.id == id }) else {
+              let source = SourceDisplayItemBuilder.homeSourceRows(for: sources).first(where: { $0.id == id }) else {
             return "All Sources"
         }
         return source.title

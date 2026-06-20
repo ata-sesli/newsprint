@@ -14,8 +14,6 @@ struct SourcesView: View {
     let sourceContentChanged: () -> Void
     @State private var editingSource: Source?
     @State private var sourcePendingDelete: Source?
-    @State private var renderedTableSections = Set<SourcesPageSection>()
-    @State private var didScheduleTablePrewarm = false
 
     var body: some View {
         SourcesPageShell(
@@ -81,13 +79,9 @@ struct SourcesView: View {
         }
         .onAppear {
             viewModel.configureSources(sources)
-            prewarmTables()
         }
         .onChange(of: sourceConfigurationToken) {
             viewModel.configureSourcesAfterExternalChange(sources)
-        }
-        .onChange(of: viewModel.selectedSection) {
-            renderedTableSections.insert(viewModel.selectedSection)
         }
         .confirmationDialog("Delete this source and its articles?", isPresented: sourceDeleteConfirmationBinding) {
             if let source = sourcePendingDelete {
@@ -142,32 +136,13 @@ struct SourcesView: View {
 
     private var tableControls: some View {
         HStack(alignment: .center, spacing: 12) {
-            Picker("Section", selection: $viewModel.selectedSection) {
-                ForEach(SourcesPageSection.allCases, id: \.self) { section in
-                    Text(section.displayName).tag(section)
-                }
-            }
-            .pickerStyle(.segmented)
-            .frame(width: 280)
-
-            Text(selectedSectionCaption)
+            Text("\(viewModel.unifiedRows.count) sources and presets")
                 .font(.callout)
                 .foregroundStyle(theme.metadata)
 
             Spacer()
 
-            switch viewModel.selectedSection {
-            case .presets:
-                if let preset = viewModel.selectedPresetRow {
-                    Button(preset.isAdded ? "Added" : "Add Preset", systemImage: preset.isAdded ? "checkmark.circle.fill" : "plus.circle") {
-                        addPreset(preset)
-                    }
-                    .disabled(preset.isAdded)
-                    .buttonStyle(.borderedProminent)
-                }
-            case .addedSources:
-                selectedSourceActions
-            }
+            selectedSourceActions
         }
     }
 
@@ -194,51 +169,13 @@ struct SourcesView: View {
         }
     }
 
-    private var selectedSectionCaption: String {
-        switch viewModel.selectedSection {
-        case .presets:
-            "\(viewModel.presetRows.count) presets"
-        case .addedSources:
-            "\(viewModel.sourceRows.count) active records"
-        }
-    }
-
     @ViewBuilder
     private var tableContent: some View {
-        let sections = renderedTableSections.union([viewModel.selectedSection])
-        ZStack {
-            if sections.contains(.presets) {
-                PresetsTable(
-                    rows: viewModel.presetRows,
-                    selection: $viewModel.selectedPresetID,
-                    addPreset: addPreset
-                )
-                .opacity(viewModel.selectedSection == .presets ? 1 : 0)
-                .allowsHitTesting(viewModel.selectedSection == .presets)
-            }
-
-            if sections.contains(.addedSources) {
-                AddedSourcesTable(
-                    rows: viewModel.sourceRows,
-                    selection: $viewModel.selectedSourceID,
-                    selectedSource: { id in
-                        sources.first { $0.id == id }
-                    },
-                    refresh: refresh,
-                    edit: { source in
-                        editingSource = source
-                    },
-                    updateEnabled: { source, enabled in
-                        viewModel.updateEnabled(source, enabled: enabled, context: modelContext, onSourcesChanged: sourceChanged)
-                    },
-                    deleteSource: { source in
-                        sourcePendingDelete = source
-                    }
-                )
-                .opacity(viewModel.selectedSection == .addedSources ? 1 : 0)
-                .allowsHitTesting(viewModel.selectedSection == .addedSources)
-            }
-        }
+        UnifiedSourcesTable(
+            rows: viewModel.unifiedRows,
+            selection: $viewModel.selectedUnifiedRowID,
+            rowAction: handleUnifiedRowAction
+        )
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
@@ -268,19 +205,29 @@ struct SourcesView: View {
         )
     }
 
-    private func addPreset(_ row: PresetRowDisplayItem) {
-        viewModel.addPreset(row, context: modelContext, onSourceInserted: sourceInserted)
-    }
-
-    private func prewarmTables() {
-        renderedTableSections.insert(viewModel.selectedSection)
-        guard !didScheduleTablePrewarm else {
-            return
-        }
-        didScheduleTablePrewarm = true
-        Task { @MainActor in
-            await Task.yield()
-            renderedTableSections = Set(SourcesPageSection.allCases)
+    private func handleUnifiedRowAction(_ row: SourcesUnifiedRowDisplayItem) {
+        switch row.action {
+        case .add:
+            guard let preset = row.preset else { return }
+            viewModel.addPreset(
+                PresetRowDisplayItem(
+                    id: preset.id,
+                    preset: preset,
+                    title: row.title,
+                    iconName: row.iconName,
+                    tags: row.tags,
+                    canonicalURLString: row.canonicalURLString,
+                    isAdded: false
+                ),
+                context: modelContext,
+                onSourceInserted: sourceInserted
+            )
+        case .remove:
+            guard let sourceID = row.sourceID,
+                  let source = sources.first(where: { $0.id == sourceID }) else {
+                return
+            }
+            sourcePendingDelete = source
         }
     }
 
@@ -346,7 +293,7 @@ struct SourcesView: View {
     private var hackerNewsSurface: some View {
         AdminSurface {
             VStack(alignment: .leading, spacing: 14) {
-                AdminSectionHeader("Hacker News", caption: "Build a tuned HNRSS feed.")
+                AdminSectionHeader("Hacker News", caption: "Build an official Hacker News feed.")
 
                 Picker("Feed", selection: $viewModel.hackerNewsKind) {
                     ForEach(HackerNewsFeedKind.allCases) { kind in
@@ -368,9 +315,6 @@ struct SourcesView: View {
                         hackerNewsNumberField("Count", text: $viewModel.hackerNewsCount)
                     }
                 }
-
-                TextField("Search query", text: $viewModel.hackerNewsSearchQuery)
-                    .textFieldStyle(.roundedBorder)
 
                 if let previewURL = viewModel.hackerNewsPreviewURL {
                     Text(previewURL.absoluteString)
@@ -517,17 +461,18 @@ struct SourcesPageShell<HeaderActions: View, BuilderContent: View, TableControls
     }
 }
 
-struct PresetsTable: View {
+struct UnifiedSourcesTable: View {
     @Environment(\.newsprintTheme) private var theme
-    let rows: [PresetRowDisplayItem]
+    let rows: [SourcesUnifiedRowDisplayItem]
     @Binding var selection: String?
-    let addPreset: (PresetRowDisplayItem) -> Void
+    let rowAction: (SourcesUnifiedRowDisplayItem) -> Void
 
     var body: some View {
         Table(rows, selection: $selection) {
             TableColumn("Feed") { row in
                 Image(systemName: row.iconName)
                     .foregroundStyle(theme.tint)
+                    .help(row.preset == nil ? "Custom source" : "Preset source")
             }
             .width(48)
 
@@ -543,71 +488,29 @@ struct PresetsTable: View {
             }
 
             TableColumn("Status") { row in
+                HStack(spacing: 6) {
+                    Image(systemName: statusIconName(for: row))
+                    Text(statusText(for: row))
+                }
+                .foregroundStyle(statusColor(for: row))
+                .lineLimit(1)
+                .help(row.lastErrorText ?? statusText(for: row))
+            }
+            .width(150)
+
+            TableColumn("Action") { row in
                 Button {
-                    if !row.isAdded {
-                        addPreset(row)
-                    }
+                    rowAction(row)
                 } label: {
-                    Label(row.isAdded ? "Added" : "Add", systemImage: row.isAdded ? "checkmark.circle.fill" : "plus.circle")
-                        .labelStyle(.titleAndIcon)
+                    Image(systemName: row.action == .add ? "plus.circle" : "trash")
+                        .font(.body.weight(.semibold))
+                        .frame(width: 28)
                 }
                 .buttonStyle(.borderless)
-                .foregroundStyle(row.isAdded ? theme.metadata : theme.tint)
-                .disabled(row.isAdded)
-            }
-            .width(96)
-        }
-        .alternatingRowBackgrounds(.enabled)
-        .scrollContentBackground(.hidden)
-        .background(theme.readerSurface.opacity(0.36), in: RoundedRectangle(cornerRadius: 8))
-        .overlay {
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(Color(nsColor: .separatorColor).opacity(0.20))
-        }
-    }
-}
-
-struct AddedSourcesTable: View {
-    @Environment(\.newsprintTheme) private var theme
-    let rows: [SourceRowDisplayItem]
-    @Binding var selection: UUID?
-    let selectedSource: (UUID) -> Source?
-    let refresh: (Source) -> Void
-    let edit: (Source) -> Void
-    let updateEnabled: (Source, Bool) -> Void
-    let deleteSource: (Source) -> Void
-
-    var body: some View {
-        Table(rows, selection: $selection) {
-            TableColumn("Enabled") { row in
-                Image(systemName: row.enabled ? "checkmark.circle.fill" : "pause.circle")
-                    .foregroundStyle(row.enabled ? theme.tint : theme.metadata)
-                    .help(row.enabled ? "Enabled" : "Paused")
+                .foregroundStyle(row.action == .add ? theme.tint : .red)
+                .help(row.action == .add ? "Add source" : "Remove source")
             }
             .width(72)
-
-            TableColumn("Name") { row in
-                Label(row.title, systemImage: row.iconName)
-                    .lineLimit(1)
-            }
-
-            TableColumn("Kind") { row in
-                Text(sourceKindText(row))
-                    .foregroundStyle(theme.metadata)
-                    .lineLimit(1)
-            }
-
-            TableColumn("Last Success") { row in
-                Text(row.successText.replacingOccurrences(of: "Success: ", with: ""))
-                    .foregroundStyle(theme.metadata)
-                    .lineLimit(1)
-            }
-
-            TableColumn("Error") { row in
-                Text(row.errorMessage == nil ? "OK" : "Error")
-                    .foregroundStyle(row.errorMessage == nil ? theme.metadata : .red)
-                    .help(row.errorMessage ?? "No recent error")
-            }
         }
         .alternatingRowBackgrounds(.enabled)
         .scrollContentBackground(.hidden)
@@ -616,30 +519,32 @@ struct AddedSourcesTable: View {
             RoundedRectangle(cornerRadius: 8)
                 .stroke(Color(nsColor: .separatorColor).opacity(0.20))
         }
-        .contextMenu(forSelectionType: UUID.self) { selectedIDs in
-            if let id = selectedIDs.first, let source = selectedSource(id) {
-                Button("Edit", systemImage: "pencil") {
-                    edit(source)
-                }
-                Button(source.enabled ? "Pause" : "Enable", systemImage: source.enabled ? "pause.circle" : "checkmark.circle") {
-                    updateEnabled(source, !source.enabled)
-                }
-                Button("Refresh", systemImage: "arrow.clockwise") {
-                    refresh(source)
-                }
-                Divider()
-                Button("Delete", systemImage: "trash", role: .destructive) {
-                    deleteSource(source)
-                }
-            }
+    }
+
+    private func statusText(for row: SourcesUnifiedRowDisplayItem) -> String {
+        switch row.action {
+        case .add:
+            "Available"
+        case .remove:
+            row.healthText
         }
     }
 
-    private func sourceKindText(_ row: SourceRowDisplayItem) -> String {
-        if let category = row.category {
-            "\(row.kindTitle) · \(category)"
-        } else {
-            row.kindTitle
+    private func statusIconName(for row: SourcesUnifiedRowDisplayItem) -> String {
+        switch row.action {
+        case .add:
+            "plus.circle"
+        case .remove:
+            row.health == .healthy ? "checkmark.circle.fill" : "exclamationmark.triangle.fill"
+        }
+    }
+
+    private func statusColor(for row: SourcesUnifiedRowDisplayItem) -> Color {
+        switch row.action {
+        case .add:
+            theme.metadata
+        case .remove:
+            row.health == .healthy ? theme.metadata : .red
         }
     }
 }
@@ -710,130 +615,6 @@ private extension DiscoveredFeedType {
         case .rss: "RSS"
         case .atom: "Atom"
         case .jsonFeed: "JSON Feed"
-        }
-    }
-}
-
-struct PresetListRow: View {
-    @Environment(\.newsprintTheme) private var theme
-    let row: PresetRowDisplayItem
-    let add: () -> Void
-
-    var body: some View {
-        Button {
-            if !row.isAdded {
-                add()
-            }
-        } label: {
-            HStack(spacing: 14) {
-                Image(systemName: row.iconName)
-                    .font(.title3.weight(.semibold))
-                    .foregroundStyle(theme.tint)
-                    .frame(width: 28, alignment: .leading)
-
-                Text(row.title)
-                    .font(.headline)
-                    .foregroundStyle(.primary)
-                    .lineLimit(1)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-
-                HStack(spacing: 6) {
-                    ForEach(row.tags, id: \.self) { tag in
-                        PillTag(title: tag)
-                    }
-                }
-                .frame(width: 360, alignment: .leading)
-
-                Image(systemName: row.isAdded ? "checkmark.circle.fill" : "plus.circle")
-                    .font(.title3.weight(.semibold))
-                    .foregroundStyle(row.isAdded ? theme.tint : theme.metadata)
-                    .frame(width: 72, alignment: .trailing)
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 11)
-            .contentShape(Rectangle())
-            .background(rowBackground, in: RoundedRectangle(cornerRadius: 7))
-        }
-        .buttonStyle(.plain)
-        .disabled(row.isAdded)
-    }
-
-    private var rowBackground: Color {
-        row.isAdded ? theme.tint.opacity(0.10) : Color.clear
-    }
-}
-
-private struct SourceListRow: View {
-    @Environment(\.newsprintTheme) private var theme
-    let source: Source
-    let displayItem: SourceRowDisplayItem
-    let refresh: (Source) -> Void
-    let edit: () -> Void
-    let updateEnabled: (Source, Bool) -> Void
-    let deleteSource: (Source) -> Void
-    @State private var isConfirmingDelete = false
-
-    var body: some View {
-        HStack(alignment: .center, spacing: 12) {
-            Image(systemName: displayItem.iconName)
-                .font(.title3.weight(.semibold))
-                .foregroundStyle(theme.tint)
-                .frame(width: 26)
-
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 8) {
-                    Text(displayItem.title)
-                        .font(.headline)
-                        .lineLimit(1)
-                    PillTag(title: displayItem.kindTitle)
-                    if let category = displayItem.category {
-                        PillTag(title: category)
-                    }
-                }
-
-                HStack(spacing: 10) {
-                    Text(displayItem.urlString)
-                        .lineLimit(1)
-                    Text(displayItem.successText)
-                        .lineLimit(1)
-                    if let error = displayItem.errorMessage {
-                        Text("Error")
-                            .foregroundStyle(.red)
-                            .help(error)
-                    }
-                }
-                .font(.caption)
-                .foregroundStyle(theme.metadata)
-            }
-
-            Spacer(minLength: 12)
-
-            Button(displayItem.enabled ? "Enabled" : "Paused", systemImage: displayItem.enabled ? "checkmark.circle.fill" : "pause.circle") {
-                updateEnabled(source, !source.enabled)
-            }
-            .buttonStyle(.borderless)
-            .foregroundStyle(displayItem.enabled ? theme.tint : theme.metadata)
-
-            Button("Edit", systemImage: "pencil", action: edit)
-                .buttonStyle(.borderless)
-
-            Button("Refresh", systemImage: "arrow.clockwise") {
-                refresh(source)
-            }
-            .buttonStyle(.borderless)
-
-            Button("Delete", systemImage: "trash", role: .destructive) {
-                isConfirmingDelete = true
-            }
-            .buttonStyle(.borderless)
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 9)
-        .contentShape(Rectangle())
-        .confirmationDialog("Delete this source and its articles?", isPresented: $isConfirmingDelete) {
-            Button("Delete Source", role: .destructive) {
-                deleteSource(source)
-            }
         }
     }
 }

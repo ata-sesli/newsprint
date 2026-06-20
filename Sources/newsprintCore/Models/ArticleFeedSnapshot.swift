@@ -6,6 +6,7 @@ public struct ArticleFeedQuery: Equatable, Sendable {
     public let offset: Int
     public let limit: Int
     public let sort: ArticleFeedSort
+    public let kindFilter: ArticleFeedKindFilter
     public let now: Date
 
     public init(
@@ -14,6 +15,7 @@ public struct ArticleFeedQuery: Equatable, Sendable {
         offset: Int,
         limit: Int,
         sort: ArticleFeedSort,
+        kindFilter: ArticleFeedKindFilter = .all,
         now: Date = Date()
     ) {
         self.filter = filter
@@ -21,6 +23,7 @@ public struct ArticleFeedQuery: Equatable, Sendable {
         self.offset = max(0, offset)
         self.limit = max(0, limit)
         self.sort = sort
+        self.kindFilter = kindFilter
         self.now = now
     }
 }
@@ -34,6 +37,47 @@ public struct ArticleFeedPageSnapshot: Equatable, Sendable {
         self.items = items
         self.nextOffset = nextOffset
         self.hasMore = hasMore
+    }
+}
+
+public struct ArticleFeedSortBundle: Equatable, Sendable {
+    public let hot: ArticleFeedPageSnapshot
+    public let newest: ArticleFeedPageSnapshot
+
+    public init(hot: ArticleFeedPageSnapshot, newest: ArticleFeedPageSnapshot) {
+        self.hot = hot
+        self.newest = newest
+    }
+
+    public func page(for sort: ArticleFeedSort) -> ArticleFeedPageSnapshot {
+        switch sort {
+        case .hot:
+            hot
+        case .newest:
+            newest
+        }
+    }
+}
+
+public struct ArticleFeedSortCacheKey: Hashable, Sendable {
+    public let filter: ArticleFilter
+    public let searchText: String
+    public let kindFilter: ArticleFeedKindFilter
+    public let offset: Int
+    public let limit: Int
+
+    public init(
+        filter: ArticleFilter,
+        searchText: String,
+        kindFilter: ArticleFeedKindFilter,
+        offset: Int,
+        limit: Int
+    ) {
+        self.filter = filter
+        self.searchText = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.kindFilter = kindFilter
+        self.offset = max(0, offset)
+        self.limit = max(0, limit)
     }
 }
 

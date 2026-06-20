@@ -47,6 +47,41 @@ import Testing
 }
 
 @MainActor
+@Test func feedReadActorBuildsHotAndNewestSortBundleFromOneQuery() async throws {
+    let container = try feedReadActorTestContainer()
+    let context = container.mainContext
+    let sourceID = UUID(uuidString: "00000000-0000-0000-0000-000000000125")!
+    context.insert(Source(
+        id: sourceID,
+        title: "Swift Source",
+        url: URL(string: "https://example.com/feed.xml")!,
+        kind: .blog
+    ))
+    try insertFeedReadActorArticles(
+        [
+            makeFeedReadActorArticle(id: "low-new", sourceID: sourceID, score: 1, publishedAt: Date(timeIntervalSince1970: 300), fetchedAt: Date(timeIntervalSince1970: 300)),
+            makeFeedReadActorArticle(id: "high-old", sourceID: sourceID, score: 10, publishedAt: Date(timeIntervalSince1970: 100), fetchedAt: Date(timeIntervalSince1970: 100)),
+            makeFeedReadActorArticle(id: "mid", sourceID: sourceID, score: 5, publishedAt: Date(timeIntervalSince1970: 200), fetchedAt: Date(timeIntervalSince1970: 200))
+        ],
+        in: context
+    )
+
+    let actor = ArticleFeedReadActor(modelContainer: container)
+    let bundle = try await actor.fetchSortBundle(query: ArticleFeedQuery(
+        filter: .inbox,
+        searchText: "",
+        offset: 0,
+        limit: 3,
+        sort: .hot
+    ))
+
+    #expect(bundle.hot.items.map(\.id) == ["high-old", "mid", "low-new"])
+    #expect(bundle.newest.items.map(\.id) == ["low-new", "mid", "high-old"])
+    #expect(bundle.hot.nextOffset == 3)
+    #expect(bundle.newest.nextOffset == 3)
+}
+
+@MainActor
 @Test func feedReadActorAppliesSearchTagFiltersAndCountsOffMain() async throws {
     let container = try feedReadActorTestContainer()
     let context = container.mainContext
@@ -99,6 +134,64 @@ import Testing
     #expect(searchPage.items.map(\.id) == ["unread-today"])
     #expect(counts == FeedCounts(today: 3, unread: 3, starred: 1, hidden: 1))
     #expect(tags == ["Hidden", "Programming", "Swift"])
+}
+
+@MainActor
+@Test func feedReadActorFiltersHackerNewsSourceFamily() async throws {
+    let container = try feedReadActorTestContainer()
+    let context = container.mainContext
+    let hackerNewsSourceID = UUID(uuidString: "00000000-0000-0000-0000-000000000123")!
+    let blogSourceID = UUID(uuidString: "00000000-0000-0000-0000-000000000124")!
+    context.insert(Source(
+        id: hackerNewsSourceID,
+        title: "Hacker News Show",
+        url: URL(string: "https://hacker-news.firebaseio.com/v0/showstories.json")!,
+        kind: .hackerNews
+    ))
+    context.insert(Source(
+        id: blogSourceID,
+        title: "Blog",
+        url: URL(string: "https://example.com/feed.xml")!,
+        kind: .blog
+    ))
+    try insertFeedReadActorArticles(
+        [
+            makeFeedReadActorArticle(id: "hn-high", sourceID: hackerNewsSourceID, title: "HN High", score: 100, tagNames: ["AI"]),
+            makeFeedReadActorArticle(id: "hn-low", sourceID: hackerNewsSourceID, title: "HN Low", score: 1, isRead: true),
+            makeFeedReadActorArticle(id: "blog-high", sourceID: blogSourceID, title: "Blog High", score: 200, tagNames: ["AI"])
+        ],
+        in: context
+    )
+
+    let actor = ArticleFeedReadActor(modelContainer: container)
+    let hnHotPage = try await actor.fetchPage(query: ArticleFeedQuery(
+        filter: .inbox,
+        searchText: "",
+        offset: 0,
+        limit: 10,
+        sort: .hot,
+        kindFilter: .hackerNews
+    ))
+    let hnUnreadPage = try await actor.fetchPage(query: ArticleFeedQuery(
+        filter: .unread,
+        searchText: "",
+        offset: 0,
+        limit: 10,
+        sort: .hot,
+        kindFilter: .hackerNews
+    ))
+    let allHotPage = try await actor.fetchPage(query: ArticleFeedQuery(
+        filter: .inbox,
+        searchText: "",
+        offset: 0,
+        limit: 10,
+        sort: .hot,
+        kindFilter: .all
+    ))
+
+    #expect(hnHotPage.items.map(\.id) == ["hn-high", "hn-low"])
+    #expect(hnUnreadPage.items.map(\.id) == ["hn-high"])
+    #expect(allHotPage.items.map(\.id) == ["blog-high", "hn-high", "hn-low"])
 }
 
 @MainActor

@@ -11,6 +11,7 @@ import Testing
     #expect(metadata.threadURL?.absoluteString == "https://news.ycombinator.com/item?id=48500866")
     #expect(metadata.points == 1)
     #expect(metadata.commentCount == 0)
+    #expect(metadata.engagementScore == 1)
     #expect(metadata.authorComment == nil)
 }
 
@@ -20,5 +21,5 @@ import Testing
     let metadata = try #require(HackerNewsMetadata(text: text))
 
     #expect(metadata.authorComment == "I built this over the weekend to make RSS calmer.")
+    #expect(metadata.engagementScore == 45)
 }
-

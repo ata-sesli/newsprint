@@ -678,7 +678,7 @@ final class ArticleFeedCollapsedCardView: NSControl {
             : nsColor(appearance.theme.rowAccent).cgColor
 
         badgeLabel.isHidden = item.hackerNewsMetadata == nil
-        badgeLabel.font = .systemFont(ofSize: metadataFontSize * 0.78, weight: .bold)
+        badgeLabel.font = .systemFont(ofSize: metadataFontSize * 0.92, weight: .bold)
         badgeLabel.textColor = .white
 
         metadataLabel.stringValue = item.metadataText
@@ -686,6 +686,7 @@ final class ArticleFeedCollapsedCardView: NSControl {
         metadataLabel.textColor = nsColor(appearance.theme.metadata)
 
         openButton.image = NSImage(systemSymbolName: "arrow.right", accessibilityDescription: "Open in Side")
+        openButton.image?.size = NSSize(width: metadataFontSize * 1.38, height: metadataFontSize * 1.38)
         openButton.bezelStyle = .inline
         openButton.isBordered = false
         openButton.contentTintColor = nsColor(appearance.theme.tint)
@@ -696,7 +697,7 @@ final class ArticleFeedCollapsedCardView: NSControl {
         statusLabel.font = .systemFont(ofSize: metadataFontSize, weight: .semibold)
         statusLabel.textColor = nsColor(appearance.theme.metadata)
 
-        chevronLabel.font = .systemFont(ofSize: metadataFontSize, weight: .semibold)
+        chevronLabel.font = .systemFont(ofSize: metadataFontSize * 1.12, weight: .semibold)
         chevronLabel.textColor = nsColor(appearance.theme.metadata)
 
         titleLabel.stringValue = item.title
@@ -820,11 +821,11 @@ final class ArticleFeedCollapsedCardView: NSControl {
             contentTopConstraint!,
             contentBottomConstraint!,
 
-            badgeLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 34),
-            badgeLabel.heightAnchor.constraint(equalToConstant: 24),
+            badgeLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 46),
+            badgeLabel.heightAnchor.constraint(equalToConstant: 32),
 
-            openButton.widthAnchor.constraint(equalToConstant: 26),
-            openButton.heightAnchor.constraint(equalToConstant: 26),
+            openButton.widthAnchor.constraint(equalToConstant: 34),
+            openButton.heightAnchor.constraint(equalToConstant: 34),
 
             headerStack.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
             titleLabel.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
@@ -958,7 +959,7 @@ private final class ArticleFeedCollapsedStatBadgeView: NSView {
         layer?.borderWidth = 0
         layer?.borderColor = nil
 
-        let statFontSize = fontSize * 1.12
+        let statFontSize = fontSize * 1.34
         imageView.image = NSImage(systemSymbolName: systemImageName, accessibilityDescription: nil)
         imageView.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: statFontSize, weight: .semibold)
         imageView.contentTintColor = nsColor(appearance.theme.metadata)
@@ -990,8 +991,8 @@ private final class ArticleFeedCollapsedStatBadgeView: NSView {
             stack.trailingAnchor.constraint(equalTo: trailingAnchor),
             stack.topAnchor.constraint(equalTo: topAnchor),
             stack.bottomAnchor.constraint(equalTo: bottomAnchor),
-            imageView.widthAnchor.constraint(equalToConstant: 17),
-            imageView.heightAnchor.constraint(equalToConstant: 17)
+            imageView.widthAnchor.constraint(equalToConstant: 23),
+            imageView.heightAnchor.constraint(equalToConstant: 23)
         ])
     }
 

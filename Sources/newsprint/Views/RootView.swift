@@ -16,6 +16,7 @@ struct RootView: View {
     @State private var previewArticleID: String?
     @State private var searchText = ""
     @State private var feedSort: ArticleFeedSort = .hot
+    @State private var feedKindFilter: ArticleFeedKindFilter = .all
     @AppStorage("newsprint.previewMode") private var previewModeRawValue = PreviewMode.reader.rawValue
     @AppStorage("newsprint.previewPaneCollapsed") private var isPreviewCollapsed = false
     @FocusState private var searchFocused: Bool
@@ -81,6 +82,16 @@ struct RootView: View {
 
         view = AnyView(view.onChange(of: feedSort) {
             expandedArticleID = nil
+            if selection.isArticleFeedSelection {
+                reloadFeed()
+            }
+        })
+
+        view = AnyView(view.onChange(of: feedKindFilter) {
+            expandedArticleID = nil
+            if feedKindFilter == .hackerNews, case .source = selection {
+                selection = .inbox
+            }
             if selection.isArticleFeedSelection {
                 reloadFeed()
             }
@@ -189,6 +200,7 @@ struct RootView: View {
                 selection: $selection,
                 searchText: $searchText,
                 feedSort: $feedSort,
+                feedKindFilter: $feedKindFilter,
                 searchFocused: $searchFocused,
                 expandedArticleID: $expandedArticleID,
                 focusedArticleID: $focusedArticleID,
@@ -336,7 +348,12 @@ struct RootView: View {
     }
 
     private func reloadFeed() {
-        feedStore.reloadIfNeeded(filter: activeFilter, searchText: searchText, sort: feedSort)
+        feedStore.reloadIfNeeded(
+            filter: activeFilter,
+            searchText: searchText,
+            sort: feedSort,
+            kindFilter: feedKindFilter
+        )
     }
 
     private func reloadFeedAfterBulkChange() {

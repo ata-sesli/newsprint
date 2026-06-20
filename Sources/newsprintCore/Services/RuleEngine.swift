@@ -108,7 +108,8 @@ public struct RuleEngine {
         let articles = try context.fetch(FetchDescriptor<Article>())
         for article in articles {
             let result = apply(rules: definitions, to: ArticleDraft(article: article))
-            article.score = result.scoreDelta
+            let engagementScore = HackerNewsMetadata(text: article.contentText ?? article.excerpt)?.engagementScore ?? 0
+            article.score = result.isHidden ? 0 : engagementScore + result.scoreDelta
             article.tagNames = result.tags
             article.matchedRuleIDs = result.matchedRuleIDs.map(\.uuidString)
             article.isHidden = article.isHidden || result.isHidden

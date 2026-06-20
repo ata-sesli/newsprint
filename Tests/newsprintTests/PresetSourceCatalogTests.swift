@@ -10,26 +10,38 @@ import Testing
     #expect(presets.map(\.title) == presets.map(\.title).sorted {
         $0.localizedCaseInsensitiveCompare($1) == .orderedAscending
     })
-    #expect(presets.first?.title == "ACM Queue")
-    #expect(presets.first?.category == "General CS & Research Journalism")
-    #expect(presets.first?.url.absoluteString == "https://queue.acm.org/rss/feeds/queue_articles.xml")
+    #expect(presets.first?.title == "Ahead of AI")
+    #expect(presets.first?.category == "AI Research & Digests")
+    #expect(presets.first?.url.absoluteString == "https://magazine.sebastianraschka.com/feed")
     #expect(presets.last?.title == "Web Browser Engineering")
     #expect(presets.last?.category == "Low-Level & Systems Engineering")
     #expect(presets.last?.url.absoluteString == "https://browser.engineering/rss.xml")
 
     let titles = Set(presets.map(\.title))
     for title in [
+        "Datadog Engineering",
+        "Fabien Sanglard",
         "Google Research Blog",
-        "ACM Queue",
-        "Computer, Enhance!",
         "Cloudflare Blog",
-        "Google Project Zero",
+        "Hugging Face Blog",
+        "Jane Street Tech Blog",
+        "Meta Engineering",
+        "Null Program",
+        "PortSwigger Research",
+        "Project Zero",
         "Rust Blog",
         "The Pragmatic Engineer"
     ] {
         #expect(titles.contains(title))
     }
 
+    #expect(!titles.contains("ACM Queue"))
+    #expect(!titles.contains("BAIR Blog"))
+    #expect(!titles.contains("Computer, Enhance!"))
+    #expect(!titles.contains("Google Project Zero"))
+    #expect(!titles.contains("NCC Group Research"))
+    #expect(!titles.contains("Netflix TechBlog"))
+    #expect(!titles.contains("Stripe Engineering"))
     #expect(!titles.contains("OpenAI News"))
     #expect(!titles.contains("Anthropic News"))
     #expect(!titles.contains("Hacker News Front Page"))
@@ -61,6 +73,6 @@ import Testing
 
     #expect(inserted)
     #expect(sources.map(\.title) == ["Hacker News Show, 50+ points"])
-    #expect(sources.map(\.url.absoluteString) == ["https://hnrss.org/show?points=50"])
+    #expect(sources.map(\.url.absoluteString) == ["https://hacker-news.firebaseio.com/v0/showstories.json?points=50"])
     #expect(sources.map(\.kind) == [.hackerNews])
 }

@@ -18,7 +18,7 @@ public actor ArticleFeedReadActor: ModelActor {
             articles = try fetchInMemoryFilteredPage(query: query, normalizedSearch: normalizedSearch)
         } else {
             var descriptor = FetchDescriptor<Article>(
-                predicate: predicate(for: query.filter, now: query.now),
+                predicate: try predicate(for: query.filter, kindFilter: query.kindFilter, now: query.now),
                 sortBy: feedSortDescriptors(sort: query.sort)
             )
             descriptor.fetchOffset = query.offset
@@ -31,6 +31,31 @@ public actor ArticleFeedReadActor: ModelActor {
             items: articles.map { ArticleFeedSnapshot(article: $0, sourceKind: sourceKinds[$0.sourceID]) },
             nextOffset: query.offset + articles.count,
             hasMore: articles.count == query.limit
+        )
+    }
+
+    public func fetchSortBundle(query: ArticleFeedQuery) throws -> ArticleFeedSortBundle {
+        let hotQuery = ArticleFeedQuery(
+            filter: query.filter,
+            searchText: query.searchText,
+            offset: query.offset,
+            limit: query.limit,
+            sort: .hot,
+            kindFilter: query.kindFilter,
+            now: query.now
+        )
+        let newestQuery = ArticleFeedQuery(
+            filter: query.filter,
+            searchText: query.searchText,
+            offset: query.offset,
+            limit: query.limit,
+            sort: .newest,
+            kindFilter: query.kindFilter,
+            now: query.now
+        )
+        return ArticleFeedSortBundle(
+            hot: try fetchPage(query: hotQuery),
+            newest: try fetchPage(query: newestQuery)
         )
     }
 
@@ -84,11 +109,14 @@ public actor ArticleFeedReadActor: ModelActor {
         let articles = try modelContext.fetch(FetchDescriptor<Article>(
             sortBy: feedSortDescriptors(sort: query.sort)
         ))
+        let sourceKinds = try sourceKindsByID(for: articles.map(\.sourceID))
         let filtered = ArticleSearchService().filter(
             articles: articles,
             filter: query.filter,
             searchText: normalizedSearch,
             sort: query.sort,
+            kindFilter: query.kindFilter,
+            sourceKindsByID: sourceKinds,
             now: query.now
         )
         return Array(filtered.dropFirst(query.offset).prefix(query.limit))
@@ -110,35 +138,54 @@ public actor ArticleFeedReadActor: ModelActor {
         })
     }
 
-    private func predicate(for filter: ArticleFilter, now: Date) -> Predicate<Article>? {
+    private func predicate(
+        for filter: ArticleFilter,
+        kindFilter: ArticleFeedKindFilter,
+        now: Date
+    ) throws -> Predicate<Article>? {
+        let sourceIDs = try sourceIDs(for: kindFilter)
         switch filter {
         case .inbox:
             return #Predicate<Article> { article in
-                !article.isHidden
+                !article.isHidden && sourceIDs.contains(article.sourceID)
             }
         case .unread:
             return #Predicate<Article> { article in
-                !article.isRead && !article.isHidden
+                !article.isRead && !article.isHidden && sourceIDs.contains(article.sourceID)
             }
         case .today:
             let startOfToday = Calendar.current.startOfDay(for: now)
             return #Predicate<Article> { article in
-                !article.isHidden && article.fetchedAt >= startOfToday
+                !article.isHidden && article.fetchedAt >= startOfToday && sourceIDs.contains(article.sourceID)
             }
         case .starred:
             return #Predicate<Article> { article in
-                article.isStarred
+                article.isStarred && sourceIDs.contains(article.sourceID)
             }
         case .hidden:
             return #Predicate<Article> { article in
-                article.isHidden
+                article.isHidden && sourceIDs.contains(article.sourceID)
             }
         case .source(let sourceID):
             return #Predicate<Article> { article in
-                article.sourceID == sourceID && !article.isHidden
+                article.sourceID == sourceID && !article.isHidden && sourceIDs.contains(article.sourceID)
             }
         case .tag:
             return nil
+        }
+    }
+
+    private func sourceIDs(for kindFilter: ArticleFeedKindFilter) throws -> [UUID] {
+        switch kindFilter {
+        case .all:
+            return try modelContext.fetch(FetchDescriptor<Source>()).map(\.id)
+        case .hackerNews:
+            let hackerNewsRawValue = SourceKind.hackerNews.rawValue
+            return try modelContext.fetch(FetchDescriptor<Source>(
+                predicate: #Predicate<Source> { source in
+                    source.kindRawValue == hackerNewsRawValue
+                }
+            )).map(\.id)
         }
     }
 

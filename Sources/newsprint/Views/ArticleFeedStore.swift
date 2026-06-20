@@ -24,7 +24,10 @@ final class ArticleFeedStore: ObservableObject {
     private var currentFilter: ArticleFilter = .inbox
     private var currentSearchText = ""
     private var currentSort: ArticleFeedSort = .hot
+    private var currentKindFilter: ArticleFeedKindFilter = .all
     private var renderWindow = ArticleRenderWindow()
+    private var sortCache = ArticleFeedSortCache()
+    private var currentSortCacheKey: ArticleFeedSortCacheKey?
     private var loadGeneration = 0
     private var hasLoadedPage = false
     private var loadTask: Task<Void, Never>?
@@ -46,28 +49,50 @@ final class ArticleFeedStore: ObservableObject {
         readActor = ArticleFeedReadActor(modelContainer: container)
     }
 
-    func reloadIfNeeded(filter: ArticleFilter, searchText: String, sort: ArticleFeedSort) {
+    func reloadIfNeeded(
+        filter: ArticleFilter,
+        searchText: String,
+        sort: ArticleFeedSort,
+        kindFilter: ArticleFeedKindFilter
+    ) {
         let normalizedSearchText = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !hasLoadedPage ||
-              currentFilter != filter ||
-              currentSearchText != normalizedSearchText ||
-              currentSort != sort else {
+        if hasLoadedPage,
+           currentFilter == filter,
+           currentSearchText == normalizedSearchText,
+           currentKindFilter == kindFilter,
+           currentSort != sort {
+            switchSort(sort)
             return
         }
 
-        reload(filter: filter, searchText: normalizedSearchText, sort: sort)
+        guard !hasLoadedPage ||
+              currentFilter != filter ||
+              currentSearchText != normalizedSearchText ||
+              currentKindFilter != kindFilter else {
+            currentSort = sort
+            return
+        }
+
+        reload(filter: filter, searchText: normalizedSearchText, sort: sort, kindFilter: kindFilter)
     }
 
-    func reload(filter: ArticleFilter, searchText: String, sort: ArticleFeedSort? = nil) {
+    func reload(
+        filter: ArticleFilter,
+        searchText: String,
+        sort: ArticleFeedSort? = nil,
+        kindFilter: ArticleFeedKindFilter? = nil
+    ) {
         guard let readActor else {
             return
         }
 
         let normalizedSearchText = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         let selectedSort = sort ?? currentSort
+        let selectedKindFilter = kindFilter ?? currentKindFilter
         currentFilter = filter
         currentSearchText = normalizedSearchText
         currentSort = selectedSort
+        currentKindFilter = selectedKindFilter
         loadGeneration += 1
         let generation = loadGeneration
         isLoading = true
@@ -84,14 +109,26 @@ final class ArticleFeedStore: ObservableObject {
                     searchText: normalizedSearchText,
                     offset: 0,
                     limit: Self.pageSize,
-                    sort: selectedSort
+                    sort: selectedSort,
+                    kindFilter: selectedKindFilter
                 )
-                async let page = readActor.fetchPage(query: query)
+                async let sortBundle = readActor.fetchSortBundle(query: query)
                 async let counts = readActor.fetchCounts()
-                let result = try await (page, counts)
+                let result = try await (sortBundle, counts)
                 guard !Task.isCancelled else { return }
                 await MainActor.run {
-                    self?.applyReload(page: result.0, counts: result.1, generation: generation)
+                    self?.applyReload(
+                        bundle: result.0,
+                        counts: result.1,
+                        key: ArticleFeedSortCacheKey(
+                            filter: filter,
+                            searchText: normalizedSearchText,
+                            kindFilter: selectedKindFilter,
+                            offset: 0,
+                            limit: Self.pageSize
+                        ),
+                        generation: generation
+                    )
                 }
             } catch {
                 guard !Task.isCancelled else { return }
@@ -234,15 +271,16 @@ final class ArticleFeedStore: ObservableObject {
             searchText: currentSearchText,
             offset: offset,
             limit: Self.pageSize,
-            sort: currentSort
+            sort: currentSort,
+            kindFilter: currentKindFilter
         )
 
         prefetchTask = Task { [weak self] in
             do {
-                let page = try await readActor.fetchPage(query: query)
+                let bundle = try await readActor.fetchSortBundle(query: query)
                 guard !Task.isCancelled else { return }
                 await MainActor.run {
-                    self?.applyPrefetch(page: page, generation: generation)
+                    self?.applyPrefetch(bundle: bundle, generation: generation)
                 }
             } catch {
                 guard !Task.isCancelled else { return }
@@ -282,10 +320,84 @@ final class ArticleFeedStore: ObservableObject {
         }
     }
 
-    private func applyReload(page: ArticleFeedPageSnapshot, counts: FeedCounts, generation: Int) {
+    private func switchSort(_ sort: ArticleFeedSort) {
+        currentSort = sort
+        guard let key = currentSortCacheKey,
+              let bundle = sortCache.bundle(for: key) else {
+            rebuildMissingSortCache()
+            return
+        }
+        let page = bundle.page(for: sort)
+        loadedItems = page.items
+        offset = page.nextOffset
+        hasMore = page.hasMore
+        renderWindow = ArticleRenderWindow()
+        publishRenderItems()
+        bulkReloadGeneration += 1
+    }
+
+    private func rebuildMissingSortCache() {
+        guard let readActor else {
+            return
+        }
+        isPreparingFeed = true
+        let generation = loadGeneration
+        let key = ArticleFeedSortCacheKey(
+            filter: currentFilter,
+            searchText: currentSearchText,
+            kindFilter: currentKindFilter,
+            offset: 0,
+            limit: Self.pageSize
+        )
+        let query = ArticleFeedQuery(
+            filter: currentFilter,
+            searchText: currentSearchText,
+            offset: 0,
+            limit: Self.pageSize,
+            sort: currentSort,
+            kindFilter: currentKindFilter
+        )
+        Task { [weak self] in
+            do {
+                let bundle = try await readActor.fetchSortBundle(query: query)
+                guard !Task.isCancelled else { return }
+                await MainActor.run {
+                    self?.applySortCacheRebuild(bundle: bundle, key: key, generation: generation)
+                }
+            } catch {
+                await MainActor.run {
+                    self?.isPreparingFeed = false
+                }
+            }
+        }
+    }
+
+    private func applySortCacheRebuild(
+        bundle: ArticleFeedSortBundle,
+        key: ArticleFeedSortCacheKey,
+        generation: Int
+    ) {
         guard generation == loadGeneration else {
             return
         }
+        sortCache.store(bundle, for: key)
+        currentSortCacheKey = key
+        switchSort(currentSort)
+        isPreparingFeed = false
+    }
+
+    private func applyReload(
+        bundle: ArticleFeedSortBundle,
+        counts: FeedCounts,
+        key: ArticleFeedSortCacheKey,
+        generation: Int
+    ) {
+        guard generation == loadGeneration else {
+            return
+        }
+        sortCache.store(bundle, for: key)
+        currentSortCacheKey = key
+        let page = bundle.page(for: currentSort)
         loadedItems = page.items
         renderWindow = ArticleRenderWindow()
         publishRenderItems()
@@ -314,11 +426,13 @@ final class ArticleFeedStore: ObservableObject {
         isPreparingFeed = false
     }
 
-    private func applyPrefetch(page: ArticleFeedPageSnapshot, generation: Int) {
+    private func applyPrefetch(bundle: ArticleFeedSortBundle, generation: Int) {
         guard generation == loadGeneration else {
             return
         }
+        let page = bundle.page(for: currentSort)
         loadedItems.append(contentsOf: page.items)
+        sortCache.append(bundle, currentKey: currentSortCacheKey)
         offset = page.nextOffset
         hasMore = page.hasMore
         edgeResetGeneration += 1
@@ -353,9 +467,37 @@ final class ArticleFeedStore: ObservableObject {
             itemsByID[item.id] = item
         }
 
-        let merged = sortItems(Array(itemsByID.values), sort: currentSort)
         let limit = max(Self.pageSize, offset, loadedItems.count)
-        loadedItems = Array(merged.prefix(limit))
+        var hotBuffer = TopCandidateBuffer<ArticleFeedDisplayItem>(
+            limit: limit,
+            areInPreferredOrder: { lhs, rhs in
+                Self.isPreferred(lhs, rhs, sort: .hot)
+            }
+        )
+        var newestBuffer = TopCandidateBuffer<ArticleFeedDisplayItem>(
+            limit: limit,
+            areInPreferredOrder: { lhs, rhs in
+                Self.isPreferred(lhs, rhs, sort: .newest)
+            }
+        )
+        hotBuffer.insert(contentsOf: itemsByID.values)
+        newestBuffer.insert(contentsOf: itemsByID.values)
+
+        let bundle = ArticleFeedSortBundle(
+            hot: ArticleFeedPageSnapshot(
+                items: hotBuffer.items,
+                nextOffset: max(offset, hotBuffer.items.count),
+                hasMore: hasMore
+            ),
+            newest: ArticleFeedPageSnapshot(
+                items: newestBuffer.items,
+                nextOffset: max(offset, newestBuffer.items.count),
+                hasMore: hasMore
+            )
+        )
+        sortCache.store(bundle, for: currentSortCacheKey)
+        let page = bundle.page(for: currentSort)
+        loadedItems = page.items
         offset = max(offset, loadedItems.count)
         publishRenderItems()
         isPreparingFeed = false
@@ -383,7 +525,7 @@ final class ArticleFeedStore: ObservableObject {
     }
 
     private func matchesCurrentFeed(_ item: ArticleFeedDisplayItem) -> Bool {
-        matches(filter: currentFilter, item: item) && matchesSearch(item)
+        matches(filter: currentFilter, item: item) && matches(kindFilter: currentKindFilter, item: item) && matchesSearch(item)
     }
 
     private func matchesSearch(_ item: ArticleFeedDisplayItem) -> Bool {
@@ -425,21 +567,32 @@ final class ArticleFeedStore: ObservableObject {
         }
     }
 
-    private func sortItems(_ items: [ArticleFeedDisplayItem], sort: ArticleFeedSort) -> [ArticleFeedDisplayItem] {
-        items.sorted { lhs, rhs in
-            switch sort {
-            case .hot:
-                if lhs.score != rhs.score {
-                    return lhs.score > rhs.score
-                }
-                return newest(lhs, rhs)
-            case .newest:
-                return newest(lhs, rhs)
-            }
+    private func matches(kindFilter: ArticleFeedKindFilter, item: ArticleFeedDisplayItem) -> Bool {
+        switch kindFilter {
+        case .all:
+            return true
+        case .hackerNews:
+            return item.sourceKind == .hackerNews
         }
     }
 
-    private func newest(_ lhs: ArticleFeedDisplayItem, _ rhs: ArticleFeedDisplayItem) -> Bool {
+    private static func isPreferred(
+        _ lhs: ArticleFeedDisplayItem,
+        _ rhs: ArticleFeedDisplayItem,
+        sort: ArticleFeedSort
+    ) -> Bool {
+        switch sort {
+        case .hot:
+            if lhs.score != rhs.score {
+                return lhs.score > rhs.score
+            }
+            return isNewer(lhs, rhs)
+        case .newest:
+            return isNewer(lhs, rhs)
+        }
+    }
+
+    private static func isNewer(_ lhs: ArticleFeedDisplayItem, _ rhs: ArticleFeedDisplayItem) -> Bool {
         let lhsPublished = lhs.publishedAt ?? .distantPast
         let rhsPublished = rhs.publishedAt ?? .distantPast
         if lhsPublished != rhsPublished {
@@ -449,5 +602,42 @@ final class ArticleFeedStore: ObservableObject {
             return lhs.fetchedAt > rhs.fetchedAt
         }
         return lhs.score > rhs.score
+    }
+}
+
+struct ArticleFeedSortCache {
+    private var bundles: [ArticleFeedSortCacheKey: ArticleFeedSortBundle] = [:]
+
+    func bundle(for key: ArticleFeedSortCacheKey) -> ArticleFeedSortBundle? {
+        bundles[key]
+    }
+
+    mutating func store(_ bundle: ArticleFeedSortBundle, for key: ArticleFeedSortCacheKey) {
+        bundles[key] = bundle
+    }
+
+    mutating func append(_ bundle: ArticleFeedSortBundle, currentKey: ArticleFeedSortCacheKey?) {
+        guard let currentKey, let existing = bundles[currentKey] else {
+            return
+        }
+        bundles[currentKey] = ArticleFeedSortBundle(
+            hot: ArticleFeedPageSnapshot(
+                items: existing.hot.items + bundle.hot.items,
+                nextOffset: bundle.hot.nextOffset,
+                hasMore: bundle.hot.hasMore
+            ),
+            newest: ArticleFeedPageSnapshot(
+                items: existing.newest.items + bundle.newest.items,
+                nextOffset: bundle.newest.nextOffset,
+                hasMore: bundle.newest.hasMore
+            )
+        )
+    }
+
+    mutating func store(_ bundle: ArticleFeedSortBundle, for key: ArticleFeedSortCacheKey?) {
+        guard let key else {
+            return
+        }
+        bundles[key] = bundle
     }
 }

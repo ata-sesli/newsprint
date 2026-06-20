@@ -4,6 +4,7 @@ import OSLog
 public enum NewsprintLog {
     public static let startup = Logger(subsystem: "Newsprint", category: "startup")
     public static let feed = Logger(subsystem: "Newsprint", category: "feed")
+    public static let network = Logger(subsystem: "Newsprint", category: "network")
     public static let discovery = Logger(subsystem: "Newsprint", category: "discovery")
     public static let rules = Logger(subsystem: "Newsprint", category: "rules")
     public static let retention = Logger(subsystem: "Newsprint", category: "retention")

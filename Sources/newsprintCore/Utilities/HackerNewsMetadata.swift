@@ -7,6 +7,10 @@ public struct HackerNewsMetadata: Equatable, Sendable {
     public let commentCount: Int?
     public let authorComment: String?
 
+    public var engagementScore: Double {
+        Double((points ?? 0) + (commentCount ?? 0))
+    }
+
     public init?(text: String?) {
         guard let text, text.localizedCaseInsensitiveContains("Comments URL:") else {
             return nil
@@ -58,4 +62,3 @@ public struct HackerNewsMetadata: Equatable, Sendable {
         return normalized.isEmpty ? nil : normalized
     }
 }
-

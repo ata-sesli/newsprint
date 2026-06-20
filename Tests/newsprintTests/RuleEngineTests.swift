@@ -162,6 +162,50 @@ import Testing
     #expect(article.matchedRuleIDs == [rule.id.uuidString])
 }
 
+@MainActor
+@Test func articleScoreIncludesHackerNewsEngagementAndRuleBoost() throws {
+    let draft = ArticleDraft(
+        sourceID: UUID(),
+        sourceTitle: "Hacker News Show",
+        title: "Show HN: Example",
+        url: URL(string: "https://example.com")!,
+        author: nil,
+        publishedAt: nil,
+        updatedAt: nil,
+        excerpt: nil,
+        contentHTML: nil,
+        contentText: "Article URL: https://example.com Comments URL: https://news.ycombinator.com/item?id=1 Points: 42 # Comments: 3",
+        externalID: nil
+    )
+    let result = RuleResult(scoreDelta: 5)
+
+    let article = Article(draft: draft, ruleResult: result)
+
+    #expect(article.score == 50)
+}
+
+@MainActor
+@Test func hiddenHackerNewsArticleScoreStaysZero() throws {
+    let draft = ArticleDraft(
+        sourceID: UUID(),
+        sourceTitle: "Hacker News Show",
+        title: "Show HN: Example",
+        url: URL(string: "https://example.com")!,
+        author: nil,
+        publishedAt: nil,
+        updatedAt: nil,
+        excerpt: nil,
+        contentHTML: nil,
+        contentText: "Article URL: https://example.com Comments URL: https://news.ycombinator.com/item?id=1 Points: 42 # Comments: 3",
+        externalID: nil
+    )
+    let result = RuleResult(isHidden: true, scoreDelta: 5)
+
+    let article = Article(draft: draft, ruleResult: result)
+
+    #expect(article.score == 0)
+}
+
 private func makeRuleDraft(title: String, contentText: String?) -> ArticleDraft {
     ArticleDraft(
         sourceID: UUID(),

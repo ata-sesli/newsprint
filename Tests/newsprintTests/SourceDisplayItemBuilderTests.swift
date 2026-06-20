@@ -56,7 +56,25 @@ import Testing
     #expect(row.category == nil)
     #expect(row.successText == "Success: Never")
     #expect(row.errorMessage == nil)
+    #expect(row.health == .healthy)
+    #expect(row.healthText == "Healthy")
+    #expect(row.lastErrorText == nil)
     #expect(row.iconName == "dot.radiowaves.left.and.right")
+}
+
+@Test func sourceDisplayBuilderMarksRowsWithErrorsUnhealthy() throws {
+    let source = Source(
+        title: "Broken",
+        url: URL(string: "https://example.com/feed.xml")!,
+        kind: .rss,
+        lastErrorMessage: "Timeout: the feed did not respond in time"
+    )
+
+    let row = SourceDisplayItemBuilder.sourceRow(for: source)
+
+    #expect(row.health == .unhealthy)
+    #expect(row.healthText == "Unhealthy")
+    #expect(row.lastErrorText == "Timeout: the feed did not respond in time")
 }
 
 @Test func sourceDisplayBuilderSingleSourceRowMatchesBulkBuilder() throws {
@@ -71,6 +89,23 @@ import Testing
     let bulk = try #require(SourceDisplayItemBuilder.sourceRows(for: [source]).first)
 
     #expect(single == bulk)
+}
+
+@Test func sourceDisplayBuilderHomeSourceRowsExcludeHackerNewsSources() throws {
+    let blog = Source(
+        title: "Blog",
+        url: URL(string: "https://example.com/feed.xml")!,
+        kind: .blog
+    )
+    let hackerNews = Source(
+        title: "Hacker News Show",
+        url: URL(string: "https://hacker-news.firebaseio.com/v0/showstories.json")!,
+        kind: .hackerNews
+    )
+
+    let rows = SourceDisplayItemBuilder.homeSourceRows(for: [hackerNews, blog])
+
+    #expect(rows.map(\.title) == ["Blog"])
 }
 
 @Test func sourceDisplayBuilderMarksSinglePresetAddedWithoutReorderingRows() throws {
@@ -92,7 +127,7 @@ import Testing
 @Test func sourcesSelectionResolvesPresetRow() throws {
     let rows = SourceDisplayItemBuilder.presetRows(for: [])
     let selected = try #require(rows.first)
-    var selection = SourcesSelectionState(selectedPresetID: selected.id)
+    let selection = SourcesSelectionState(selectedPresetID: selected.id)
 
     #expect(selection.selectedPresetRow(in: rows) == selected)
 }
@@ -104,7 +139,7 @@ import Testing
         kind: .rss
     )
     let rows = SourceDisplayItemBuilder.sourceRows(for: [source])
-    var selection = SourcesSelectionState(selectedSection: .addedSources, selectedSourceID: source.id)
+    let selection = SourcesSelectionState(selectedSection: .addedSources, selectedSourceID: source.id)
 
     #expect(selection.selectedSourceRow(in: rows)?.id == source.id)
 }
@@ -143,4 +178,55 @@ import Testing
 
     #expect(!preset.isAdded)
     #expect(updatedPreset.isAdded)
+}
+
+@Test func sourceDisplayBuilderBuildsUnifiedRowsForPresetsAndCustomSources() throws {
+    let preset = PresetSource(
+        title: "Preset A",
+        url: URL(string: "https://example.com/a.xml")!,
+        category: "AI",
+        kind: .blog
+    )
+    let addedPresetSource = Source(
+        title: "Preset A",
+        url: preset.url,
+        kind: preset.kind,
+        category: preset.category
+    )
+    let customSource = Source(
+        title: "Custom Z",
+        url: URL(string: "https://custom.example.com/feed.xml")!,
+        kind: .rss,
+        lastErrorMessage: "HTTP 404"
+    )
+
+    let rows = SourceDisplayItemBuilder.unifiedRows(
+        for: [customSource, addedPresetSource],
+        presets: [preset]
+    )
+
+    #expect(rows.map(\.title) == ["Custom Z", "Preset A"])
+    let custom = try #require(rows.first { $0.title == "Custom Z" })
+    let presetRow = try #require(rows.first { $0.title == "Preset A" })
+    #expect(custom.action == .remove)
+    #expect(custom.sourceID == customSource.id)
+    #expect(custom.health == .unhealthy)
+    #expect(presetRow.action == .remove)
+    #expect(presetRow.sourceID == addedPresetSource.id)
+    #expect(presetRow.preset != nil)
+}
+
+@Test func sourceDisplayBuilderUnifiedRowsShowAddForMissingPreset() throws {
+    let preset = PresetSource(
+        title: "Preset A",
+        url: URL(string: "https://example.com/a.xml")!,
+        category: "AI",
+        kind: .blog
+    )
+
+    let row = try #require(SourceDisplayItemBuilder.unifiedRows(for: [], presets: [preset]).first)
+
+    #expect(row.action == .add)
+    #expect(row.sourceID == nil)
+    #expect(row.preset == preset)
 }
