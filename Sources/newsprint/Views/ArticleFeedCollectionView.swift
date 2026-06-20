@@ -527,7 +527,7 @@ final class ArticleFeedCollapsedCardView: NSControl {
     private let headerStack = NSStackView()
     private let headerSpacer = NSView()
     private let statsStack = NSStackView()
-    private let badgeLabel = NSTextField(labelWithString: "HN")
+    private let badgeView = ArticleFeedHackerNewsBadgeView()
     private let metadataLabel = NSTextField(labelWithString: "")
     private let openButton = NSButton()
     private let statusLabel = NSTextField(labelWithString: "")
@@ -604,9 +604,10 @@ final class ArticleFeedCollapsedCardView: NSControl {
             ? NSColor.clear.cgColor
             : nsColor(appearance.theme.rowAccent).cgColor
 
-        badgeLabel.isHidden = item.hackerNewsMetadata == nil
-        badgeLabel.font = .systemFont(ofSize: metadataFontSize * 0.78, weight: .bold)
-        badgeLabel.textColor = .white
+        badgeView.configure(
+            isVisible: item.hackerNewsMetadata != nil,
+            fontSize: metadataFontSize * 0.78
+        )
 
         metadataLabel.stringValue = item.metadataText
         metadataLabel.font = cardFont(choice: appearance.readerFontChoice, size: metadataFontSize, weight: .semibold)
@@ -654,6 +655,9 @@ final class ArticleFeedCollapsedCardView: NSControl {
         )
         statsStack.isHidden = pointsBadge.isHidden && commentsBadge.isHidden
         contentStack.spacing = density.rowSpacing
+        contentStack.setCustomSpacing(density.rowSpacing + 5, after: headerStack)
+        contentStack.setCustomSpacing(density.rowSpacing + 8, after: titleLabel)
+        contentStack.setCustomSpacing(density.rowSpacing + 8, after: previewLabel)
 
         configureExpandedContent(item: item, isExpanded: isExpanded, appearance: appearance)
         configureActionButtons(item: item, isExpanded: isExpanded, appearance: appearance)
@@ -674,13 +678,7 @@ final class ArticleFeedCollapsedCardView: NSControl {
 
         accentView.wantsLayer = true
         accentView.layer?.cornerRadius = 2
-        badgeLabel.alignment = .center
-        badgeLabel.maximumNumberOfLines = 1
-        badgeLabel.wantsLayer = true
-        badgeLabel.layer?.cornerRadius = 3
-        badgeLabel.layer?.backgroundColor = NSColor.systemOrange.cgColor
-
-        for field in [badgeLabel, metadataLabel, statusLabel, chevronLabel, titleLabel, previewLabel, expandedBodyLabel, authorTitleLabel, authorCommentLabel] {
+        for field in [metadataLabel, statusLabel, chevronLabel, titleLabel, previewLabel, expandedBodyLabel, authorTitleLabel, authorCommentLabel] {
             field.translatesAutoresizingMaskIntoConstraints = false
             field.lineBreakMode = .byTruncatingTail
         }
@@ -699,6 +697,7 @@ final class ArticleFeedCollapsedCardView: NSControl {
         previewLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
         openButton.translatesAutoresizingMaskIntoConstraints = false
+        badgeView.translatesAutoresizingMaskIntoConstraints = false
         accentView.translatesAutoresizingMaskIntoConstraints = false
         contentStack.translatesAutoresizingMaskIntoConstraints = false
         dividerView.translatesAutoresizingMaskIntoConstraints = false
@@ -750,7 +749,7 @@ final class ArticleFeedCollapsedCardView: NSControl {
         addSubview(accentView)
         addSubview(contentStack)
 
-        headerStack.addArrangedSubview(badgeLabel)
+        headerStack.addArrangedSubview(badgeView)
         headerStack.addArrangedSubview(metadataLabel)
         headerStack.addArrangedSubview(openButton)
         headerStack.addArrangedSubview(statusLabel)
@@ -793,8 +792,8 @@ final class ArticleFeedCollapsedCardView: NSControl {
             contentTopConstraint!,
             contentBottomConstraint!,
 
-            badgeLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 40),
-            badgeLabel.heightAnchor.constraint(equalToConstant: 28),
+            badgeView.widthAnchor.constraint(greaterThanOrEqualToConstant: 40),
+            badgeView.heightAnchor.constraint(equalToConstant: 28),
 
             openButton.widthAnchor.constraint(equalToConstant: 34),
             openButton.heightAnchor.constraint(equalToConstant: 34),
@@ -1004,6 +1003,66 @@ final class ArticleFeedCollapsedCardView: NSControl {
             return base
         }
         return NSFont(descriptor: descriptor, size: size) ?? base
+    }
+}
+
+@MainActor
+private final class ArticleFeedHackerNewsBadgeView: NSView {
+    private var font = NSFont.systemFont(ofSize: 12, weight: .bold)
+
+    override var isHidden: Bool {
+        didSet { invalidateIntrinsicContentSize() }
+    }
+
+    override var intrinsicContentSize: NSSize {
+        isHidden ? .zero : NSSize(width: 40, height: 28)
+    }
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        setup()
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        setup()
+    }
+
+    func configure(isVisible: Bool, fontSize: CGFloat) {
+        isHidden = !isVisible
+        font = NSFont.systemFont(ofSize: fontSize, weight: .bold)
+        needsDisplay = true
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        guard !isHidden else { return }
+
+        let badgePath = NSBezierPath(roundedRect: bounds, xRadius: 5, yRadius: 5)
+        NSColor.systemOrange.setFill()
+        badgePath.fill()
+
+        let paragraphStyle = NSMutableParagraphStyle()
+        paragraphStyle.alignment = .center
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .foregroundColor: NSColor.white,
+            .paragraphStyle: paragraphStyle
+        ]
+        let text = "HN" as NSString
+        let textSize = text.size(withAttributes: attributes)
+        let textRect = NSRect(
+            x: bounds.minX,
+            y: bounds.midY - (textSize.height / 2),
+            width: bounds.width,
+            height: textSize.height
+        )
+        text.draw(in: textRect, withAttributes: attributes)
+    }
+
+    private func setup() {
+        wantsLayer = true
+        setContentHuggingPriority(.required, for: .horizontal)
+        setContentCompressionResistancePriority(.required, for: .horizontal)
     }
 }
 
