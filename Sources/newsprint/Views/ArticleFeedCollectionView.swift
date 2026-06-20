@@ -104,6 +104,7 @@ final class ArticleFeedCollectionCoordinator: NSObject, NSCollectionViewDataSour
     private var needsReloadOnActivation = false
     private var shouldScrollToTopOnActivation = false
     private let heightCache = ArticleFeedHeightCache()
+    private var textExpandedArticleIDs: Set<String> = []
     private var lastLayoutWidth: CGFloat = 0
     private var edgeReporter = ArticleRenderWindowEdgeReporter()
     private var onToggleExpanded: (ArticleFeedDisplayItem) -> Void
@@ -249,6 +250,9 @@ final class ArticleFeedCollectionCoordinator: NSObject, NSCollectionViewDataSour
         }
 
         if oldExpandedID != newExpandedArticleID {
+            if let oldExpandedID {
+                textExpandedArticleIDs.remove(oldExpandedID)
+            }
             reloadExpandedItems(oldExpandedID: oldExpandedID, newExpandedID: newExpandedArticleID)
             collectionView.collectionViewLayout?.invalidateLayout()
             return
@@ -281,12 +285,16 @@ final class ArticleFeedCollectionCoordinator: NSObject, NSCollectionViewDataSour
         articleItem.configure(
             item: itemModel,
             isExpanded: itemModel.id == expandedArticleID,
+            isTextExpanded: textExpandedArticleIDs.contains(itemModel.id),
             appearance: appearance,
             onToggleExpanded: { [weak self] item in
                 self?.onToggleExpanded(item)
             },
             onOpenInPreview: { [weak self] item in
                 self?.onOpenInPreview(item)
+            },
+            onReadMore: { [weak self] articleID in
+                self?.expandText(for: articleID)
             },
             onArticleAction: { [weak self] articleID, mutation in
                 self?.onArticleAction(articleID, mutation)
@@ -310,12 +318,13 @@ final class ArticleFeedCollectionCoordinator: NSObject, NSCollectionViewDataSour
             return NSSize(width: width, height: CGFloat(appearance.density.collapsedCardHeight))
         }
 
-        let key = item.heightCacheKey(width: width, appearance: appearance)
+        let isTextExpanded = textExpandedArticleIDs.contains(item.id)
+        let key = item.heightCacheKey(width: width, appearance: appearance, isTextExpanded: isTextExpanded)
         if let cached = heightCache.height(for: key) {
             return NSSize(width: width, height: cached)
         }
 
-        let measured = measureHeight(for: item, width: width)
+        let measured = measureHeight(for: item, width: width, isTextExpanded: isTextExpanded)
         heightCache.setHeight(measured, for: key)
         return NSSize(width: width, height: measured)
     }
@@ -362,19 +371,31 @@ final class ArticleFeedCollectionCoordinator: NSObject, NSCollectionViewDataSour
         return max(120, width - sectionInset.left - sectionInset.right)
     }
 
-    private func measureHeight(for item: ArticleFeedDisplayItem, width: CGFloat) -> CGFloat {
+    private func measureHeight(
+        for item: ArticleFeedDisplayItem,
+        width: CGFloat,
+        isTextExpanded: Bool
+    ) -> CGFloat {
         let cardView = ArticleFeedCollapsedCardView()
         cardView.translatesAutoresizingMaskIntoConstraints = false
+        cardView.frame = NSRect(
+            x: 0,
+            y: 0,
+            width: width,
+            height: CGFloat(appearance.density.collapsedCardHeight)
+        )
+        cardView.widthAnchor.constraint(equalToConstant: width).isActive = true
         cardView.configure(
             item: item,
             isExpanded: item.id == expandedArticleID,
+            isTextExpanded: isTextExpanded,
             appearance: appearance,
             onToggleExpanded: {},
             onOpenInPreview: {},
+            onReadMore: { _ in },
             onArticleAction: { _, _ in }
         )
-        cardView.frame = NSRect(x: 0, y: 0, width: width, height: 10)
-        cardView.widthAnchor.constraint(equalToConstant: width).isActive = true
+        cardView.layoutSubtreeIfNeeded()
         let size = cardView.fittingSize
         return max(1, ceil(size.height))
     }
@@ -397,6 +418,19 @@ final class ArticleFeedCollectionCoordinator: NSObject, NSCollectionViewDataSour
             }
             collectionView.reloadItems(at: Set(indexPaths))
         }
+    }
+
+    private func expandText(for articleID: String) {
+        guard let collectionView else {
+            return
+        }
+
+        textExpandedArticleIDs.insert(articleID)
+        heightCache.removeHeights(articleID: articleID)
+        if let index = items.firstIndex(where: { $0.id == articleID }) {
+            collectionView.reloadItems(at: Set([IndexPath(item: index, section: 0)]))
+        }
+        collectionView.collectionViewLayout?.invalidateLayout()
     }
 
     private func updateLayoutSpacing(for appearance: ArticleFeedAppearance) {
@@ -480,9 +514,11 @@ final class ArticleFeedCollectionItem: NSCollectionViewItem {
     func configure(
         item: ArticleFeedDisplayItem,
         isExpanded: Bool,
+        isTextExpanded: Bool,
         appearance: ArticleFeedAppearance,
         onToggleExpanded: @escaping (ArticleFeedDisplayItem) -> Void,
         onOpenInPreview: @escaping (ArticleFeedDisplayItem) -> Void,
+        onReadMore: @escaping (String) -> Void,
         onArticleAction: @escaping (String, ArticleStateMutation) -> Void
     ) {
         currentID = item.id
@@ -508,6 +544,7 @@ final class ArticleFeedCollectionItem: NSCollectionViewItem {
         cardView.configure(
             item: item,
             isExpanded: isExpanded,
+            isTextExpanded: isTextExpanded,
             appearance: appearance,
             onToggleExpanded: {
                 onToggleExpanded(item)
@@ -515,6 +552,7 @@ final class ArticleFeedCollectionItem: NSCollectionViewItem {
             onOpenInPreview: {
                 onOpenInPreview(item)
             },
+            onReadMore: onReadMore,
             onArticleAction: onArticleAction
         )
     }
@@ -536,11 +574,13 @@ final class ArticleFeedCollapsedCardView: NSControl {
     private let previewLabel = NSTextField(labelWithString: "")
     private let dividerView = NSBox()
     private let expandedBodyLabel = NSTextField(labelWithString: "")
+    private let bodyReadMoreButton = NSButton(title: "Read More", target: nil, action: nil)
     private let authorCommentView = NSView()
     private let authorAccentView = NSView()
     private let authorStack = NSStackView()
     private let authorTitleLabel = NSTextField(labelWithString: "Author Comment")
     private let authorCommentLabel = NSTextField(labelWithString: "")
+    private let authorReadMoreButton = NSButton(title: "Read More", target: nil, action: nil)
     private let actionsStack = NSStackView()
     private let pointsBadge = ArticleFeedCollapsedStatBadgeView()
     private let commentsBadge = ArticleFeedCollapsedStatBadgeView()
@@ -554,7 +594,9 @@ final class ArticleFeedCollapsedCardView: NSControl {
     private var currentItem: ArticleFeedDisplayItem?
     private var onToggleExpanded: (() -> Void)?
     private var onOpenInPreview: (() -> Void)?
+    private var onReadMore: ((String) -> Void)?
     private var onArticleAction: ((String, ArticleStateMutation) -> Void)?
+    private var lastConfiguredWidth: CGFloat = 0
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -573,15 +615,19 @@ final class ArticleFeedCollapsedCardView: NSControl {
     func configure(
         item: ArticleFeedDisplayItem,
         isExpanded: Bool,
+        isTextExpanded: Bool,
         appearance: ArticleFeedAppearance,
         onToggleExpanded: @escaping () -> Void,
         onOpenInPreview: @escaping () -> Void,
+        onReadMore: @escaping (String) -> Void,
         onArticleAction: @escaping (String, ArticleStateMutation) -> Void
     ) {
         currentItem = item
         self.onToggleExpanded = onToggleExpanded
         self.onOpenInPreview = onOpenInPreview
+        self.onReadMore = onReadMore
         self.onArticleAction = onArticleAction
+        lastConfiguredWidth = bounds.width
 
         let density = appearance.density
         let metadataFontSize = max(12, CGFloat(appearance.readerFontSize) * density.metadataScale)
@@ -659,7 +705,12 @@ final class ArticleFeedCollapsedCardView: NSControl {
         contentStack.setCustomSpacing(density.rowSpacing + 8, after: titleLabel)
         contentStack.setCustomSpacing(density.rowSpacing + 8, after: previewLabel)
 
-        configureExpandedContent(item: item, isExpanded: isExpanded, appearance: appearance)
+        configureExpandedContent(
+            item: item,
+            isExpanded: isExpanded,
+            isTextExpanded: isTextExpanded,
+            appearance: appearance
+        )
         configureActionButtons(item: item, isExpanded: isExpanded, appearance: appearance)
 
         accentTopConstraint?.constant = contentInset
@@ -686,17 +737,25 @@ final class ArticleFeedCollapsedCardView: NSControl {
         previewLabel.lineBreakMode = .byWordWrapping
         expandedBodyLabel.lineBreakMode = .byWordWrapping
         authorCommentLabel.lineBreakMode = .byWordWrapping
+        titleLabel.cell?.usesSingleLineMode = false
         previewLabel.cell?.wraps = true
         previewLabel.cell?.isScrollable = false
+        previewLabel.cell?.usesSingleLineMode = false
         expandedBodyLabel.cell?.wraps = true
         expandedBodyLabel.cell?.isScrollable = false
+        expandedBodyLabel.cell?.usesSingleLineMode = false
         authorCommentLabel.cell?.wraps = true
         authorCommentLabel.cell?.isScrollable = false
+        authorCommentLabel.cell?.usesSingleLineMode = false
         metadataLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         previewLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        expandedBodyLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        authorCommentLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
         openButton.translatesAutoresizingMaskIntoConstraints = false
+        bodyReadMoreButton.translatesAutoresizingMaskIntoConstraints = false
+        authorReadMoreButton.translatesAutoresizingMaskIntoConstraints = false
         badgeView.translatesAutoresizingMaskIntoConstraints = false
         accentView.translatesAutoresizingMaskIntoConstraints = false
         contentStack.translatesAutoresizingMaskIntoConstraints = false
@@ -739,6 +798,8 @@ final class ArticleFeedCollapsedCardView: NSControl {
         authorStack.distribution = .fill
         authorStack.detachesHiddenViews = true
         authorTitleLabel.font = .systemFont(ofSize: 15, weight: .semibold)
+        configureReadMoreButton(bodyReadMoreButton)
+        configureReadMoreButton(authorReadMoreButton)
 
         actionsStack.orientation = .horizontal
         actionsStack.alignment = .centerY
@@ -765,11 +826,13 @@ final class ArticleFeedCollapsedCardView: NSControl {
         contentStack.addArrangedSubview(statsStack)
         contentStack.addArrangedSubview(dividerView)
         contentStack.addArrangedSubview(expandedBodyLabel)
+        contentStack.addArrangedSubview(bodyReadMoreButton)
         contentStack.addArrangedSubview(authorCommentView)
         contentStack.addArrangedSubview(actionsStack)
 
         authorStack.addArrangedSubview(authorTitleLabel)
         authorStack.addArrangedSubview(authorCommentLabel)
+        authorStack.addArrangedSubview(authorReadMoreButton)
         authorCommentView.addSubview(authorAccentView)
         authorCommentView.addSubview(authorStack)
 
@@ -814,7 +877,8 @@ final class ArticleFeedCollapsedCardView: NSControl {
             authorStack.leadingAnchor.constraint(equalTo: authorAccentView.trailingAnchor, constant: 14),
             authorStack.trailingAnchor.constraint(equalTo: authorCommentView.trailingAnchor, constant: -16),
             authorStack.topAnchor.constraint(equalTo: authorCommentView.topAnchor, constant: 16),
-            authorStack.bottomAnchor.constraint(equalTo: authorCommentView.bottomAnchor, constant: -16)
+            authorStack.bottomAnchor.constraint(equalTo: authorCommentView.bottomAnchor, constant: -16),
+            authorCommentLabel.widthAnchor.constraint(equalTo: authorStack.widthAnchor)
         ])
     }
 
@@ -825,11 +889,14 @@ final class ArticleFeedCollapsedCardView: NSControl {
     private func configureExpandedContent(
         item: ArticleFeedDisplayItem,
         isExpanded: Bool,
+        isTextExpanded: Bool,
         appearance: ArticleFeedAppearance
     ) {
         dividerView.isHidden = !isExpanded
         expandedBodyLabel.isHidden = true
+        bodyReadMoreButton.isHidden = true
         authorCommentView.isHidden = true
+        authorReadMoreButton.isHidden = true
 
         guard isExpanded else { return }
 
@@ -840,6 +907,7 @@ final class ArticleFeedCollapsedCardView: NSControl {
         )
         expandedBodyLabel.font = bodyFont
         expandedBodyLabel.textColor = .labelColor
+        expandedBodyLabel.maximumNumberOfLines = isTextExpanded ? 0 : 4
 
         if item.hackerNewsMetadata == nil,
            let bodyText = HTMLTextExtractor.text(fromHTML: item.contentText ?? item.excerpt)?.articleFeedNilIfBlank {
@@ -848,10 +916,11 @@ final class ArticleFeedCollapsedCardView: NSControl {
             if previewNormalized == nil || bodyNormalized != previewNormalized {
                 expandedBodyLabel.stringValue = bodyText
                 expandedBodyLabel.isHidden = false
+                bodyReadMoreButton.isHidden = isTextExpanded || !bodyText.articleFeedProbablyNeedsReadMore
             }
         }
 
-        if let authorComment = item.hackerNewsMetadata?.authorComment?.articleFeedNilIfBlank {
+        if let authorComment = item.hackerNewsAuthorCommentText {
             authorCommentView.isHidden = false
             authorCommentView.layer?.backgroundColor = nsColor(appearance.theme.rowAccent).withAlphaComponent(0.10).cgColor
             authorAccentView.layer?.backgroundColor = nsColor(appearance.theme.rowAccent).cgColor
@@ -860,7 +929,28 @@ final class ArticleFeedCollapsedCardView: NSControl {
             authorCommentLabel.stringValue = authorComment
             authorCommentLabel.font = bodyFont
             authorCommentLabel.textColor = .labelColor
+            authorCommentLabel.maximumNumberOfLines = isTextExpanded ? 0 : 4
+            authorReadMoreButton.isHidden = isTextExpanded || !authorComment.articleFeedProbablyNeedsReadMore
         }
+
+        updatePreferredTextWidths()
+    }
+
+    override func layout() {
+        super.layout()
+        lastConfiguredWidth = bounds.width
+        updatePreferredTextWidths()
+    }
+
+    private func updatePreferredTextWidths() {
+        let fallbackContentWidth = max(1, lastConfiguredWidth - (contentLeadingConstraint?.constant ?? 0) + (contentTrailingConstraint?.constant ?? 0))
+        let contentWidth = contentStack.bounds.width > 1 ? contentStack.bounds.width : fallbackContentWidth
+        let fallbackAuthorWidth = max(1, contentWidth - 50)
+        let authorWidth = authorStack.bounds.width > 1 ? authorStack.bounds.width : fallbackAuthorWidth
+        titleLabel.preferredMaxLayoutWidth = contentWidth
+        previewLabel.preferredMaxLayoutWidth = contentWidth
+        expandedBodyLabel.preferredMaxLayoutWidth = contentWidth
+        authorCommentLabel.preferredMaxLayoutWidth = authorWidth
     }
 
     private func configureActionButtons(
@@ -916,6 +1006,23 @@ final class ArticleFeedCollapsedCardView: NSControl {
         button.bezelStyle = .rounded
         button.controlSize = .regular
         return button
+    }
+
+    private func configureReadMoreButton(_ button: NSButton) {
+        button.target = self
+        button.action = #selector(readMore)
+        button.bezelStyle = .inline
+        button.isBordered = false
+        button.controlSize = .regular
+        button.alignment = .left
+        button.setButtonType(.momentaryPushIn)
+        button.contentTintColor = NSColor.systemOrange
+        button.font = .systemFont(ofSize: 14, weight: .semibold)
+    }
+
+    @objc private func readMore() {
+        guard let currentItem else { return }
+        onReadMore?(currentItem.id)
     }
 
     @objc private func toggleStar() {
@@ -1152,5 +1259,10 @@ private extension String {
         components(separatedBy: .whitespacesAndNewlines)
             .filter { !$0.isEmpty }
             .joined(separator: " ")
+    }
+
+    var articleFeedProbablyNeedsReadMore: Bool {
+        let hardLineCount = components(separatedBy: .newlines).count
+        return hardLineCount > 4 || articleFeedNormalizedText.count > 260
     }
 }

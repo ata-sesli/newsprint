@@ -23,6 +23,7 @@ struct ArticleFeedAppearance: Equatable {
 struct ArticleFeedHeightCacheKey: Hashable {
     let articleID: String
     let isExpanded: Bool
+    let isTextExpanded: Bool
     let width: Int
     let themeRawValue: String
     let readerFontRawValue: String
@@ -51,10 +52,15 @@ final class ArticleFeedHeightCache {
 }
 
 extension ArticleFeedDisplayItem {
-    func heightCacheKey(width: CGFloat, appearance: ArticleFeedAppearance) -> ArticleFeedHeightCacheKey {
+    func heightCacheKey(
+        width: CGFloat,
+        appearance: ArticleFeedAppearance,
+        isTextExpanded: Bool = false
+    ) -> ArticleFeedHeightCacheKey {
         ArticleFeedHeightCacheKey(
             articleID: id,
             isExpanded: true,
+            isTextExpanded: isTextExpanded,
             width: Int(width.rounded()),
             themeRawValue: appearance.theme.choice.rawValue,
             readerFontRawValue: appearance.readerFontChoice.rawValue,

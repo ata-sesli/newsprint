@@ -210,6 +210,30 @@ public struct ArticleFeedSnapshot: Identifiable, Equatable, Sendable {
         return copy
     }
 
+    public var hackerNewsAuthorCommentText: String? {
+        guard hackerNewsMetadata != nil else {
+            return nil
+        }
+
+        if let contentHTML,
+           let text = HTMLTextExtractor.text(fromHTML: contentHTML)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .nilIfEmpty {
+            return text
+        }
+
+        if let excerpt,
+           let text = HTMLTextExtractor.text(fromHTML: excerpt)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .nilIfEmpty {
+            return text
+        }
+
+        return hackerNewsMetadata?.authorComment?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .nilIfEmpty
+    }
+
     private static func metadataText(sourceTitle: String, author: String?, date: Date) -> String {
         var parts = [sourceTitle]
         if let author, !author.isEmpty {
