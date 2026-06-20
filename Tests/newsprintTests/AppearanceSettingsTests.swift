@@ -96,7 +96,7 @@ import Testing
             baseIconRawValue: "terminal.fill",
             isRefreshing: false,
             hasSyncError: true
-        ) == "exclamationmark.triangle.fill"
+        ) == "terminal.fill"
     )
 
     #expect(

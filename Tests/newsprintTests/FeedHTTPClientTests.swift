@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import newsprintCore
 
-@Test func feedHTTPClientUsesEightSecondTimeoutForSourceRefresh() async throws {
+@Test func feedHTTPClientUsesFourSecondTimeoutForFastSourceRefresh() async throws {
     TimeoutCapturingURLProtocol.lastTimeout = nil
     let configuration = URLSessionConfiguration.ephemeral
     configuration.protocolClasses = [TimeoutCapturingURLProtocol.self]
@@ -16,7 +16,7 @@ import Testing
 
     _ = try await client.fetch(source: source)
 
-    #expect(TimeoutCapturingURLProtocol.lastTimeout == 8)
+    #expect(TimeoutCapturingURLProtocol.lastTimeout == 4)
 }
 
 private final class TimeoutCapturingURLProtocol: URLProtocol, @unchecked Sendable {

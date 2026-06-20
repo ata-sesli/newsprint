@@ -13,6 +13,7 @@ public final class Source {
     public var lastFetchedAt: Date?
     public var lastSuccessfulFetchAt: Date?
     public var lastErrorMessage: String?
+    public var consecutiveFailureCount: Int
     public var etag: String?
     public var lastModified: String?
     public var createdAt: Date
@@ -34,6 +35,7 @@ public final class Source {
         lastFetchedAt: Date? = nil,
         lastSuccessfulFetchAt: Date? = nil,
         lastErrorMessage: String? = nil,
+        consecutiveFailureCount: Int = 0,
         etag: String? = nil,
         lastModified: String? = nil,
         createdAt: Date = Date(),
@@ -49,6 +51,7 @@ public final class Source {
         self.lastFetchedAt = lastFetchedAt
         self.lastSuccessfulFetchAt = lastSuccessfulFetchAt
         self.lastErrorMessage = lastErrorMessage
+        self.consecutiveFailureCount = consecutiveFailureCount
         self.etag = etag
         self.lastModified = lastModified
         self.createdAt = createdAt
@@ -59,4 +62,3 @@ public final class Source {
         Source(title: title, url: URL(string: url)!, kind: kind)
     }
 }
-

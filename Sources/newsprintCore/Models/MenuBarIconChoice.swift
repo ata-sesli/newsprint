@@ -40,9 +40,6 @@ public enum MenuBarIconResolver {
         if isRefreshing {
             return "arrow.clockwise"
         }
-        if hasSyncError {
-            return "exclamationmark.triangle.fill"
-        }
         return MenuBarIconChoice(storedRawValue: baseIconRawValue).systemImage
     }
 }

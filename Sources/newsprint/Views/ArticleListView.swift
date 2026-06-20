@@ -21,6 +21,7 @@ struct ArticleFeedView: View {
     let isLoading: Bool
     let isPreparingFeed: Bool
     let isRefreshing: Bool
+    let refreshProgress: RefreshProgressState?
     let isActive: Bool
     let hasLoadedInitialPage: Bool
     let previewArticle: ArticleFeedDisplayItem?
@@ -66,6 +67,8 @@ struct ArticleFeedView: View {
                 feedKindFilter: $feedKindFilter,
                 isPreviewCollapsed: $isPreviewCollapsed,
                 isRefreshing: isRefreshing,
+                isPreparingFeed: isPreparingFeed,
+                refreshProgress: refreshProgress,
                 searchFocused: searchFocused,
                 cleanHome: cleanHome,
                 applyPendingRefresh: applyPendingRefresh,
@@ -442,6 +445,8 @@ struct FeedControlHeader: View {
     @Binding var feedKindFilter: ArticleFeedKindFilter
     @Binding var isPreviewCollapsed: Bool
     let isRefreshing: Bool
+    let isPreparingFeed: Bool
+    let refreshProgress: RefreshProgressState?
     var searchFocused: FocusState<Bool>.Binding
     let cleanHome: () -> Void
     let applyPendingRefresh: () -> Void
@@ -477,6 +482,13 @@ struct FeedControlHeader: View {
                     .buttonStyle(HeaderActionButtonStyle())
                     .disabled(isRefreshing)
                     .help("Refresh All")
+
+                    if let refreshProgress {
+                        Text(refreshProgress.displayText)
+                            .font(.caption.weight(.semibold))
+                            .monospacedDigit()
+                            .foregroundStyle(theme.metadata)
+                    }
 
                     Button(role: .destructive) {
                         isConfirmingCleanHome = true
@@ -692,11 +704,11 @@ struct FeedControlHeader: View {
     @ViewBuilder
     private var refreshHeaderLabel: some View {
         if usesCompactControls {
-            RotatingRefreshIcon(isRefreshing: isRefreshing)
+            RotatingRefreshIcon(isRefreshing: isPreparingFeed)
                 .accessibilityLabel("Refresh All")
         } else {
             HStack(spacing: 6) {
-                RotatingRefreshIcon(isRefreshing: isRefreshing)
+                RotatingRefreshIcon(isRefreshing: isPreparingFeed)
                 Text("Refresh All")
             }
         }

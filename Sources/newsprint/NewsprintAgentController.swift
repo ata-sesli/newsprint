@@ -6,6 +6,8 @@ import newsprintCore
 final class NewsprintAgentController: ObservableObject {
     @Published private(set) var lastRefreshAt: Date?
     @Published private(set) var isRefreshing = false
+    @Published private(set) var isPreparingFeed = false
+    @Published private(set) var refreshProgress: RefreshProgressState?
     @Published private(set) var statusMessage: String?
     @Published private(set) var backgroundRefreshMinutes: Int?
     @Published private(set) var menuBarIconRawValue: String
@@ -52,23 +54,45 @@ final class NewsprintAgentController: ObservableObject {
         }
 
         isRefreshing = true
-        statusMessage = "Refreshing feeds..."
+        isPreparingFeed = false
+        refreshProgress = RefreshProgressState(phase: .fastFetching, completedSourceCount: 0, totalSourceCount: 0)
+        statusMessage = nil
 
         Task { @MainActor in
-            let summary = await refreshActor.refreshAll { [weak self] phase in
-                await MainActor.run {
-                    self?.statusMessage = phase.statusMessage
-                }
+            let progressSink: @Sendable (RefreshProgressState) async -> Void = { @MainActor [weak self] progress in
+                self?.refreshProgress = progress
             }
+            let fastSummary = await refreshActor.refreshFast(progressHandler: progressSink)
+            isPreparingFeed = fastSummary.hasFeedChanges
+            refreshProgress = RefreshProgressState(
+                phase: .preparing,
+                completedSourceCount: fastSummary.refreshedSourceCount + fastSummary.failedCount,
+                totalSourceCount: fastSummary.refreshedSourceCount + fastSummary.failedCount,
+                failedSourceCount: fastSummary.failedCount,
+                insertedCount: fastSummary.insertedCount
+            )
             NotificationCenter.default.post(
                 name: .newsprintDataChanged,
-                object: FeedRefreshEvent(summary: summary, origin: origin)
+                object: FeedRefreshEvent(summary: fastSummary, origin: origin)
             )
+            isPreparingFeed = false
+
+            let recoverySummary = await refreshActor.refreshRecovery(
+                excludingSourceIDs: Set(fastSummary.sourceIDs),
+                progressHandler: progressSink
+            )
+            if recoverySummary.hasFeedChanges {
+                NotificationCenter.default.post(
+                    name: .newsprintDataChanged,
+                    object: FeedRefreshEvent(summary: recoverySummary, origin: .automatic)
+                )
+            }
+
             lastRefreshAt = Date()
             isRefreshing = false
-            statusMessage = summary.failedCount > 0
-                ? "Refresh finished with \(summary.failedCount) failed source\(summary.failedCount == 1 ? "" : "s")."
-                : nil
+            isPreparingFeed = false
+            refreshProgress = nil
+            statusMessage = nil
         }
     }
 
@@ -80,6 +104,8 @@ final class NewsprintAgentController: ObservableObject {
         }
 
         isRefreshing = true
+        isPreparingFeed = false
+        refreshProgress = nil
         statusMessage = "Refreshing source..."
 
         Task { @MainActor in
@@ -87,6 +113,7 @@ final class NewsprintAgentController: ObservableObject {
             NotificationCenter.default.post(name: .newsprintDataChanged, object: summary)
             lastRefreshAt = Date()
             isRefreshing = false
+            isPreparingFeed = false
             statusMessage = summary.errorMessage
         }
     }
@@ -121,7 +148,7 @@ final class NewsprintAgentController: ObservableObject {
         MenuBarIconResolver.effectiveSystemImage(
             baseIconRawValue: menuBarIconRawValue,
             isRefreshing: isRefreshing,
-            hasSyncError: statusMessage != nil && !isRefreshing
+            hasSyncError: false
         )
     }
 

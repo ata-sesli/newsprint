@@ -363,25 +363,19 @@ final class ArticleFeedCollectionCoordinator: NSObject, NSCollectionViewDataSour
     }
 
     private func measureHeight(for item: ArticleFeedDisplayItem, width: CGFloat) -> CGFloat {
-        let view = ArticleFeedCard(
-            article: item,
+        let cardView = ArticleFeedCollapsedCardView()
+        cardView.translatesAutoresizingMaskIntoConstraints = false
+        cardView.configure(
+            item: item,
             isExpanded: item.id == expandedArticleID,
-            hackerNewsMetadata: item.hackerNewsMetadata,
-            metadataText: item.metadataText,
-            previewText: item.previewText,
+            appearance: appearance,
             onToggleExpanded: {},
             onOpenInPreview: {},
             onArticleAction: { _, _ in }
         )
-        .environment(\.newsprintTheme, appearance.theme)
-        .environment(\.readerFontChoice, appearance.readerFontChoice)
-        .environment(\.readerFontSize, appearance.readerFontSize)
-        .environment(\.articleListDensity, appearance.density)
-        .frame(width: width)
-
-        let hostingView = NSHostingView(rootView: view)
-        hostingView.frame = NSRect(x: 0, y: 0, width: width, height: 10)
-        let size = hostingView.fittingSize
+        cardView.frame = NSRect(x: 0, y: 0, width: width, height: 10)
+        cardView.widthAnchor.constraint(equalToConstant: width).isActive = true
+        let size = cardView.fittingSize
         return max(1, ceil(size.height))
     }
 
@@ -473,7 +467,6 @@ final class ArticleFeedCollectionCoordinator: NSObject, NSCollectionViewDataSour
 @MainActor
 final class ArticleFeedCollectionItem: NSCollectionViewItem {
     static let reuseIdentifier = NSUserInterfaceItemIdentifier("ArticleFeedCollectionItem")
-    private var hostingView: NSHostingView<AnyView>?
     private var collapsedView: ArticleFeedCollapsedCardView?
     private(set) var currentID: String?
     private(set) var currentStateKey: String?
@@ -495,84 +488,6 @@ final class ArticleFeedCollectionItem: NSCollectionViewItem {
         currentID = item.id
         currentStateKey = "\(item.isRead)|\(item.isStarred)|\(item.isHidden)"
 
-        if isExpanded {
-            configureExpanded(
-                item: item,
-                appearance: appearance,
-                onToggleExpanded: onToggleExpanded,
-                onOpenInPreview: onOpenInPreview,
-                onArticleAction: onArticleAction
-            )
-        } else {
-            configureCollapsed(
-                item: item,
-                appearance: appearance,
-                onToggleExpanded: onToggleExpanded,
-                onOpenInPreview: onOpenInPreview,
-                onArticleAction: onArticleAction
-            )
-        }
-    }
-
-    private func configureExpanded(
-        item: ArticleFeedDisplayItem,
-        appearance: ArticleFeedAppearance,
-        onToggleExpanded: @escaping (ArticleFeedDisplayItem) -> Void,
-        onOpenInPreview: @escaping (ArticleFeedDisplayItem) -> Void,
-        onArticleAction: @escaping (String, ArticleStateMutation) -> Void
-    ) {
-        collapsedView?.removeFromSuperview()
-        collapsedView = nil
-
-        let rootView = AnyView(
-            ArticleFeedCard(
-                article: item,
-                isExpanded: true,
-                hackerNewsMetadata: item.hackerNewsMetadata,
-                metadataText: item.metadataText,
-                previewText: item.previewText,
-                onToggleExpanded: {
-                    onToggleExpanded(item)
-                },
-                onOpenInPreview: {
-                    onOpenInPreview(item)
-                },
-                onArticleAction: onArticleAction
-            )
-            .environment(\.newsprintTheme, appearance.theme)
-            .environment(\.readerFontChoice, appearance.readerFontChoice)
-            .environment(\.readerFontSize, appearance.readerFontSize)
-            .environment(\.articleListDensity, appearance.density)
-        )
-
-        if let hostingView {
-            hostingView.rootView = rootView
-        } else {
-            let hostingView = NSHostingView(rootView: rootView)
-            hostingView.translatesAutoresizingMaskIntoConstraints = false
-            hostingView.setContentHuggingPriority(.defaultLow, for: .horizontal)
-            hostingView.setContentHuggingPriority(.defaultLow, for: .vertical)
-            view.addSubview(hostingView)
-            NSLayoutConstraint.activate([
-                hostingView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-                hostingView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-                hostingView.topAnchor.constraint(equalTo: view.topAnchor),
-                hostingView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
-            ])
-            self.hostingView = hostingView
-        }
-    }
-
-    private func configureCollapsed(
-        item: ArticleFeedDisplayItem,
-        appearance: ArticleFeedAppearance,
-        onToggleExpanded: @escaping (ArticleFeedDisplayItem) -> Void,
-        onOpenInPreview: @escaping (ArticleFeedDisplayItem) -> Void,
-        onArticleAction: @escaping (String, ArticleStateMutation) -> Void
-    ) {
-        hostingView?.removeFromSuperview()
-        hostingView = nil
-
         let cardView: ArticleFeedCollapsedCardView
         if let collapsedView {
             cardView = collapsedView
@@ -592,6 +507,7 @@ final class ArticleFeedCollectionItem: NSCollectionViewItem {
 
         cardView.configure(
             item: item,
+            isExpanded: isExpanded,
             appearance: appearance,
             onToggleExpanded: {
                 onToggleExpanded(item)
@@ -618,6 +534,14 @@ final class ArticleFeedCollapsedCardView: NSControl {
     private let chevronLabel = NSTextField(labelWithString: "⌄")
     private let titleLabel = NSTextField(labelWithString: "")
     private let previewLabel = NSTextField(labelWithString: "")
+    private let dividerView = NSBox()
+    private let expandedBodyLabel = NSTextField(labelWithString: "")
+    private let authorCommentView = NSView()
+    private let authorAccentView = NSView()
+    private let authorStack = NSStackView()
+    private let authorTitleLabel = NSTextField(labelWithString: "Author Comment")
+    private let authorCommentLabel = NSTextField(labelWithString: "")
+    private let actionsStack = NSStackView()
     private let pointsBadge = ArticleFeedCollapsedStatBadgeView()
     private let commentsBadge = ArticleFeedCollapsedStatBadgeView()
     private var accentTopConstraint: NSLayoutConstraint?
@@ -648,6 +572,7 @@ final class ArticleFeedCollapsedCardView: NSControl {
 
     func configure(
         item: ArticleFeedDisplayItem,
+        isExpanded: Bool,
         appearance: ArticleFeedAppearance,
         onToggleExpanded: @escaping () -> Void,
         onOpenInPreview: @escaping () -> Void,
@@ -666,11 +591,13 @@ final class ArticleFeedCollapsedCardView: NSControl {
         wantsLayer = true
         layer?.cornerRadius = density.cardCornerRadius
         layer?.backgroundColor = nsColor(appearance.theme.readerSurface).cgColor
-        layer?.borderWidth = 1
-        layer?.borderColor = NSColor.separatorColor.withAlphaComponent(0.10).cgColor
-        layer?.shadowColor = NSColor.black.withAlphaComponent(0.025).cgColor
-        layer?.shadowRadius = 4
-        layer?.shadowOffset = NSSize(width: 0, height: 1)
+        layer?.borderWidth = isExpanded ? 1.4 : 1
+        layer?.borderColor = (isExpanded
+            ? nsColor(appearance.theme.rowAccent).withAlphaComponent(0.55)
+            : NSColor.separatorColor.withAlphaComponent(0.10)).cgColor
+        layer?.shadowColor = NSColor.black.withAlphaComponent(isExpanded ? 0.10 : 0.025).cgColor
+        layer?.shadowRadius = isExpanded ? 12 : 4
+        layer?.shadowOffset = NSSize(width: 0, height: isExpanded ? 5 : 1)
         layer?.shadowOpacity = 1
 
         accentView.layer?.backgroundColor = item.isRead
@@ -678,15 +605,16 @@ final class ArticleFeedCollapsedCardView: NSControl {
             : nsColor(appearance.theme.rowAccent).cgColor
 
         badgeLabel.isHidden = item.hackerNewsMetadata == nil
-        badgeLabel.font = .systemFont(ofSize: metadataFontSize * 0.92, weight: .bold)
+        badgeLabel.font = .systemFont(ofSize: metadataFontSize * 0.78, weight: .bold)
         badgeLabel.textColor = .white
 
         metadataLabel.stringValue = item.metadataText
         metadataLabel.font = cardFont(choice: appearance.readerFontChoice, size: metadataFontSize, weight: .semibold)
         metadataLabel.textColor = nsColor(appearance.theme.metadata)
 
-        openButton.image = NSImage(systemSymbolName: "arrow.right", accessibilityDescription: "Open in Side")
-        openButton.image?.size = NSSize(width: metadataFontSize * 1.38, height: metadataFontSize * 1.38)
+        let arrowConfiguration = NSImage.SymbolConfiguration(pointSize: metadataFontSize * 1.50, weight: .bold)
+        openButton.image = NSImage(systemSymbolName: "arrow.right", accessibilityDescription: "Open in Side")?
+            .withSymbolConfiguration(arrowConfiguration)
         openButton.bezelStyle = .inline
         openButton.isBordered = false
         openButton.contentTintColor = nsColor(appearance.theme.tint)
@@ -697,6 +625,7 @@ final class ArticleFeedCollapsedCardView: NSControl {
         statusLabel.font = .systemFont(ofSize: metadataFontSize, weight: .semibold)
         statusLabel.textColor = nsColor(appearance.theme.metadata)
 
+        chevronLabel.stringValue = isExpanded ? "⌃" : "⌄"
         chevronLabel.font = .systemFont(ofSize: metadataFontSize * 1.12, weight: .semibold)
         chevronLabel.textColor = nsColor(appearance.theme.metadata)
 
@@ -709,7 +638,7 @@ final class ArticleFeedCollapsedCardView: NSControl {
         previewLabel.isHidden = item.previewText == nil
         previewLabel.font = cardFont(choice: appearance.readerFontChoice, size: CGFloat(appearance.readerFontSize), weight: .regular)
         previewLabel.textColor = .secondaryLabelColor
-        previewLabel.maximumNumberOfLines = density.previewLineLimit
+        previewLabel.maximumNumberOfLines = isExpanded ? 0 : density.previewLineLimit
 
         pointsBadge.configure(
             value: item.hackerNewsMetadata?.points,
@@ -726,9 +655,12 @@ final class ArticleFeedCollapsedCardView: NSControl {
         statsStack.isHidden = pointsBadge.isHidden && commentsBadge.isHidden
         contentStack.spacing = density.rowSpacing
 
+        configureExpandedContent(item: item, isExpanded: isExpanded, appearance: appearance)
+        configureActionButtons(item: item, isExpanded: isExpanded, appearance: appearance)
+
         accentTopConstraint?.constant = contentInset
         accentBottomConstraint?.constant = -contentInset
-        accentWidthConstraint?.constant = item.isRead ? 0 : 3
+        accentWidthConstraint?.constant = item.isRead ? 0 : (isExpanded ? 5 : 3)
         contentLeadingConstraint?.constant = contentInset
         contentTrailingConstraint?.constant = -contentInset
         contentTopConstraint?.constant = contentInset
@@ -743,18 +675,25 @@ final class ArticleFeedCollapsedCardView: NSControl {
         accentView.wantsLayer = true
         accentView.layer?.cornerRadius = 2
         badgeLabel.alignment = .center
+        badgeLabel.maximumNumberOfLines = 1
         badgeLabel.wantsLayer = true
         badgeLabel.layer?.cornerRadius = 3
         badgeLabel.layer?.backgroundColor = NSColor.systemOrange.cgColor
 
-        for field in [badgeLabel, metadataLabel, statusLabel, chevronLabel, titleLabel, previewLabel] {
+        for field in [badgeLabel, metadataLabel, statusLabel, chevronLabel, titleLabel, previewLabel, expandedBodyLabel, authorTitleLabel, authorCommentLabel] {
             field.translatesAutoresizingMaskIntoConstraints = false
             field.lineBreakMode = .byTruncatingTail
         }
         titleLabel.lineBreakMode = .byWordWrapping
         previewLabel.lineBreakMode = .byWordWrapping
+        expandedBodyLabel.lineBreakMode = .byWordWrapping
+        authorCommentLabel.lineBreakMode = .byWordWrapping
         previewLabel.cell?.wraps = true
         previewLabel.cell?.isScrollable = false
+        expandedBodyLabel.cell?.wraps = true
+        expandedBodyLabel.cell?.isScrollable = false
+        authorCommentLabel.cell?.wraps = true
+        authorCommentLabel.cell?.isScrollable = false
         metadataLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         previewLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -762,6 +701,11 @@ final class ArticleFeedCollapsedCardView: NSControl {
         openButton.translatesAutoresizingMaskIntoConstraints = false
         accentView.translatesAutoresizingMaskIntoConstraints = false
         contentStack.translatesAutoresizingMaskIntoConstraints = false
+        dividerView.translatesAutoresizingMaskIntoConstraints = false
+        authorCommentView.translatesAutoresizingMaskIntoConstraints = false
+        authorAccentView.translatesAutoresizingMaskIntoConstraints = false
+        authorStack.translatesAutoresizingMaskIntoConstraints = false
+        actionsStack.translatesAutoresizingMaskIntoConstraints = false
 
         headerStack.orientation = .horizontal
         headerStack.alignment = .centerY
@@ -784,6 +728,25 @@ final class ArticleFeedCollapsedCardView: NSControl {
         contentStack.distribution = .fill
         contentStack.detachesHiddenViews = true
 
+        dividerView.boxType = .separator
+
+        authorCommentView.wantsLayer = true
+        authorCommentView.layer?.cornerRadius = 8
+        authorAccentView.wantsLayer = true
+        authorAccentView.layer?.cornerRadius = 2
+        authorStack.orientation = .vertical
+        authorStack.alignment = .leading
+        authorStack.spacing = 10
+        authorStack.distribution = .fill
+        authorStack.detachesHiddenViews = true
+        authorTitleLabel.font = .systemFont(ofSize: 15, weight: .semibold)
+
+        actionsStack.orientation = .horizontal
+        actionsStack.alignment = .centerY
+        actionsStack.spacing = 10
+        actionsStack.distribution = .gravityAreas
+        actionsStack.detachesHiddenViews = true
+
         addSubview(accentView)
         addSubview(contentStack)
 
@@ -801,6 +764,15 @@ final class ArticleFeedCollapsedCardView: NSControl {
         contentStack.addArrangedSubview(titleLabel)
         contentStack.addArrangedSubview(previewLabel)
         contentStack.addArrangedSubview(statsStack)
+        contentStack.addArrangedSubview(dividerView)
+        contentStack.addArrangedSubview(expandedBodyLabel)
+        contentStack.addArrangedSubview(authorCommentView)
+        contentStack.addArrangedSubview(actionsStack)
+
+        authorStack.addArrangedSubview(authorTitleLabel)
+        authorStack.addArrangedSubview(authorCommentLabel)
+        authorCommentView.addSubview(authorAccentView)
+        authorCommentView.addSubview(authorStack)
 
         accentTopConstraint = accentView.topAnchor.constraint(equalTo: topAnchor, constant: 22)
         accentBottomConstraint = accentView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -22)
@@ -821,20 +793,130 @@ final class ArticleFeedCollapsedCardView: NSControl {
             contentTopConstraint!,
             contentBottomConstraint!,
 
-            badgeLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 46),
-            badgeLabel.heightAnchor.constraint(equalToConstant: 32),
+            badgeLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 40),
+            badgeLabel.heightAnchor.constraint(equalToConstant: 28),
 
             openButton.widthAnchor.constraint(equalToConstant: 34),
             openButton.heightAnchor.constraint(equalToConstant: 34),
 
             headerStack.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
             titleLabel.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
-            previewLabel.widthAnchor.constraint(equalTo: contentStack.widthAnchor)
+            previewLabel.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
+            dividerView.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
+            expandedBodyLabel.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
+            authorCommentView.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
+            actionsStack.widthAnchor.constraint(lessThanOrEqualTo: contentStack.widthAnchor),
+
+            authorAccentView.leadingAnchor.constraint(equalTo: authorCommentView.leadingAnchor, constant: 16),
+            authorAccentView.topAnchor.constraint(equalTo: authorCommentView.topAnchor, constant: 16),
+            authorAccentView.bottomAnchor.constraint(equalTo: authorCommentView.bottomAnchor, constant: -16),
+            authorAccentView.widthAnchor.constraint(equalToConstant: 4),
+
+            authorStack.leadingAnchor.constraint(equalTo: authorAccentView.trailingAnchor, constant: 14),
+            authorStack.trailingAnchor.constraint(equalTo: authorCommentView.trailingAnchor, constant: -16),
+            authorStack.topAnchor.constraint(equalTo: authorCommentView.topAnchor, constant: 16),
+            authorStack.bottomAnchor.constraint(equalTo: authorCommentView.bottomAnchor, constant: -16)
         ])
     }
 
     @objc private func openInPreview() {
         onOpenInPreview?()
+    }
+
+    private func configureExpandedContent(
+        item: ArticleFeedDisplayItem,
+        isExpanded: Bool,
+        appearance: ArticleFeedAppearance
+    ) {
+        dividerView.isHidden = !isExpanded
+        expandedBodyLabel.isHidden = true
+        authorCommentView.isHidden = true
+
+        guard isExpanded else { return }
+
+        let bodyFont = cardFont(
+            choice: appearance.readerFontChoice,
+            size: CGFloat(appearance.readerFontSize),
+            weight: .regular
+        )
+        expandedBodyLabel.font = bodyFont
+        expandedBodyLabel.textColor = .labelColor
+
+        if item.hackerNewsMetadata == nil,
+           let bodyText = HTMLTextExtractor.text(fromHTML: item.contentText ?? item.excerpt)?.articleFeedNilIfBlank {
+            let bodyNormalized = bodyText.articleFeedNormalizedText
+            let previewNormalized = item.previewText?.articleFeedNilIfBlank?.articleFeedNormalizedText
+            if previewNormalized == nil || bodyNormalized != previewNormalized {
+                expandedBodyLabel.stringValue = bodyText
+                expandedBodyLabel.isHidden = false
+            }
+        }
+
+        if let authorComment = item.hackerNewsMetadata?.authorComment?.articleFeedNilIfBlank {
+            authorCommentView.isHidden = false
+            authorCommentView.layer?.backgroundColor = nsColor(appearance.theme.rowAccent).withAlphaComponent(0.10).cgColor
+            authorAccentView.layer?.backgroundColor = nsColor(appearance.theme.rowAccent).cgColor
+            authorTitleLabel.stringValue = "Author Comment"
+            authorTitleLabel.textColor = .labelColor
+            authorCommentLabel.stringValue = authorComment
+            authorCommentLabel.font = bodyFont
+            authorCommentLabel.textColor = .labelColor
+        }
+    }
+
+    private func configureActionButtons(
+        item: ArticleFeedDisplayItem,
+        isExpanded: Bool,
+        appearance: ArticleFeedAppearance
+    ) {
+        actionsStack.arrangedSubviews.forEach { view in
+            actionsStack.removeArrangedSubview(view)
+            view.removeFromSuperview()
+        }
+        actionsStack.isHidden = !isExpanded
+        guard isExpanded else { return }
+
+        actionsStack.addArrangedSubview(actionButton(
+            title: item.isStarred ? "Unstar" : "Star",
+            symbolName: item.isStarred ? "star.slash" : "star",
+            action: #selector(toggleStar)
+        ))
+        actionsStack.addArrangedSubview(actionButton(
+            title: item.isRead ? "Mark Unread" : "Mark Read",
+            symbolName: item.isRead ? "circle" : "checkmark.circle",
+            action: #selector(toggleRead)
+        ))
+        actionsStack.addArrangedSubview(actionButton(
+            title: item.isHidden ? "Unhide" : "Hide",
+            symbolName: item.isHidden ? "eye" : "eye.slash",
+            action: #selector(toggleHidden)
+        ))
+        actionsStack.addArrangedSubview(actionButton(
+            title: "Open Original",
+            symbolName: "safari",
+            action: #selector(openOriginal)
+        ))
+        if item.hackerNewsMetadata?.threadURL != nil {
+            actionsStack.addArrangedSubview(actionButton(
+                title: "Open HN Thread",
+                symbolName: "bubble.left.and.bubble.right",
+                action: #selector(openHNThread)
+            ))
+        }
+        actionsStack.addArrangedSubview(actionButton(
+            title: "Copy Link",
+            symbolName: "link",
+            action: #selector(copyLink)
+        ))
+    }
+
+    private func actionButton(title: String, symbolName: String, action: Selector) -> NSButton {
+        let button = NSButton(title: title, target: self, action: action)
+        button.image = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil)
+        button.imagePosition = .imageLeading
+        button.bezelStyle = .rounded
+        button.controlSize = .regular
+        return button
     }
 
     @objc private func toggleStar() {
@@ -998,5 +1080,18 @@ private final class ArticleFeedCollapsedStatBadgeView: NSView {
 
     private func nsColor(_ color: Color) -> NSColor {
         NSColor(color)
+    }
+}
+
+private extension String {
+    var articleFeedNilIfBlank: String? {
+        let value = trimmingCharacters(in: .whitespacesAndNewlines)
+        return value.isEmpty ? nil : value
+    }
+
+    var articleFeedNormalizedText: String {
+        components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
     }
 }

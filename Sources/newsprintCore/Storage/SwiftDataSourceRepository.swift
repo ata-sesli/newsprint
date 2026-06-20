@@ -51,16 +51,23 @@ public final class SwiftDataSourceRepository {
     }
 
     public func delete(_ source: Source) throws {
-        let sourceID = source.id
-        let articleDescriptor = FetchDescriptor<Article>(
-            predicate: #Predicate<Article> { article in
-                article.sourceID == sourceID
+        try delete([source])
+    }
+
+    public func delete(_ sources: [Source]) throws {
+        guard !sources.isEmpty else { return }
+        for source in sources {
+            let sourceID = source.id
+            let articleDescriptor = FetchDescriptor<Article>(
+                predicate: #Predicate<Article> { article in
+                    article.sourceID == sourceID
+                }
+            )
+            for article in try context.fetch(articleDescriptor) {
+                context.delete(article)
             }
-        )
-        for article in try context.fetch(articleDescriptor) {
-            context.delete(article)
+            context.delete(source)
         }
-        context.delete(source)
         try context.save()
     }
 

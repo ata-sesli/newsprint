@@ -78,6 +78,71 @@ import Testing
     #expect(refreshedSource.lastFetchedAt != nil)
     #expect(refreshedSource.lastSuccessfulFetchAt == nil)
     #expect(refreshedSource.lastErrorMessage?.contains("HTTP 500") == true)
+    #expect(refreshedSource.consecutiveFailureCount == 1)
+}
+
+@MainActor
+@Test func feedRefreshActorRetriesDegradedSourcesInRecoveryLane() async throws {
+    let container = try refreshActorTestContainer()
+    let context = container.mainContext
+    let feedURL = URL(string: "https://example.com/degraded-rss.xml")!
+    context.insert(Source(
+        title: "Degraded RSS",
+        url: feedURL,
+        kind: .rss,
+        lastErrorMessage: "Previous timeout",
+        consecutiveFailureCount: 1
+    ))
+    try context.save()
+
+    MockFeedURLProtocol.register(.success(try fixtureData("rss", extension: "xml")), for: feedURL)
+    let actor = FeedRefreshActor(
+        modelContainer: container,
+        httpClient: FeedHTTPClient(session: mockFeedSession())
+    )
+
+    let summary = await actor.refreshAll()
+    let refreshedSource = try #require(try context.fetch(FetchDescriptor<Source>()).first)
+
+    #expect(summary.fastInsertedCount == 0)
+    #expect(summary.recoveryInsertedCount == 2)
+    #expect(summary.recoveredSourceCount == 1)
+    #expect(refreshedSource.lastErrorMessage == nil)
+    #expect(refreshedSource.consecutiveFailureCount == 0)
+}
+
+@MainActor
+@Test func feedRefreshActorSkipsDeadSourcesAutomaticallyButExplicitRefreshCanRecover() async throws {
+    let container = try refreshActorTestContainer()
+    let context = container.mainContext
+    let feedURL = URL(string: "https://example.com/dead-rss.xml")!
+    let source = Source(
+        title: "Dead RSS",
+        url: feedURL,
+        kind: .rss,
+        lastErrorMessage: "Repeated timeout",
+        consecutiveFailureCount: 3
+    )
+    context.insert(source)
+    try context.save()
+
+    MockFeedURLProtocol.register(.success(try fixtureData("rss", extension: "xml")), for: feedURL)
+    let actor = FeedRefreshActor(
+        modelContainer: container,
+        httpClient: FeedHTTPClient(session: mockFeedSession())
+    )
+
+    let automaticSummary = await actor.refreshAll()
+    #expect(automaticSummary.deadSourceCount == 1)
+    #expect(automaticSummary.insertedCount == 0)
+    #expect(MockFeedURLProtocol.requestedURLs(matching: [feedURL]).isEmpty)
+
+    let explicitSummary = await actor.refresh(sourceID: source.id)
+    let refreshedSource = try #require(try context.fetch(FetchDescriptor<Source>()).first)
+
+    #expect(explicitSummary.insertedCount == 2)
+    #expect(refreshedSource.lastErrorMessage == nil)
+    #expect(refreshedSource.consecutiveFailureCount == 0)
 }
 
 @MainActor

@@ -18,6 +18,7 @@ public struct SourceRowDisplayItem: Identifiable, Equatable, Sendable {
 public enum SourceHealth: String, Codable, Equatable, Sendable {
     case healthy
     case unhealthy
+    case dead
 
     public var displayName: String {
         switch self {
@@ -25,6 +26,8 @@ public enum SourceHealth: String, Codable, Equatable, Sendable {
             "Healthy"
         case .unhealthy:
             "Unhealthy"
+        case .dead:
+            "Dead"
         }
     }
 }
@@ -152,6 +155,23 @@ public struct SourcesSelectionState: Equatable, Sendable {
         if selectedPresetID != nil, selectedPresetRow(in: presetRows) == nil {
             selectedPresetID = nil
         }
+    }
+}
+
+public struct SourcesUnifiedSelectionState: Equatable, Sendable {
+    public var selectedRowIDs: Set<String>
+
+    public init(selectedRowIDs: Set<String> = []) {
+        self.selectedRowIDs = selectedRowIDs
+    }
+
+    public func selectedRows(in rows: [SourcesUnifiedRowDisplayItem]) -> [SourcesUnifiedRowDisplayItem] {
+        rows.filter { selectedRowIDs.contains($0.id) }
+    }
+
+    public mutating func pruneMissingRows(in rows: [SourcesUnifiedRowDisplayItem]) {
+        let validIDs = Set(rows.map(\.id))
+        selectedRowIDs.formIntersection(validIDs)
     }
 }
 
@@ -295,7 +315,10 @@ public enum SourceDisplayItemBuilder {
     }
 
     private static func health(for source: Source) -> SourceHealth {
-        source.lastErrorMessage?.nilIfEmpty == nil ? .healthy : .unhealthy
+        if source.consecutiveFailureCount >= 3 {
+            return .dead
+        }
+        return source.lastErrorMessage?.nilIfEmpty == nil ? .healthy : .unhealthy
     }
 
     private static func iconName(for kind: SourceKind) -> String {

@@ -13,7 +13,7 @@ struct SourcesView: View {
     let sourceChanged: () -> Void
     let sourceContentChanged: () -> Void
     @State private var editingSource: Source?
-    @State private var sourcePendingDelete: Source?
+    @State private var sourcesPendingDelete: [Source] = []
 
     var body: some View {
         SourcesPageShell(
@@ -83,13 +83,13 @@ struct SourcesView: View {
         .onChange(of: sourceConfigurationToken) {
             viewModel.configureSourcesAfterExternalChange(sources)
         }
-        .confirmationDialog("Delete this source and its articles?", isPresented: sourceDeleteConfirmationBinding) {
-            if let source = sourcePendingDelete {
-                Button("Delete Source", role: .destructive) {
-                    if viewModel.deleteSource(source, context: modelContext, onSourcesChanged: sourceChanged) {
+        .confirmationDialog(deleteConfirmationTitle, isPresented: sourceDeleteConfirmationBinding) {
+            if !sourcesPendingDelete.isEmpty {
+                Button(deleteConfirmationButtonTitle, role: .destructive) {
+                    if viewModel.deleteSources(sourcesPendingDelete, context: modelContext, onSourcesChanged: sourceChanged) {
                         sourceContentChanged()
                     }
-                    sourcePendingDelete = nil
+                    sourcesPendingDelete = []
                 }
             }
         }
@@ -148,24 +148,39 @@ struct SourcesView: View {
 
     @ViewBuilder
     private var selectedSourceActions: some View {
-        if let source = selectedSource {
-            Button("Edit", systemImage: "pencil") {
-                editingSource = source
-            }
-            Button(source.enabled ? "Pause" : "Enable", systemImage: source.enabled ? "pause.circle" : "checkmark.circle") {
-                viewModel.updateEnabled(source, enabled: !source.enabled, context: modelContext, onSourcesChanged: sourceChanged)
-            }
-            Button("Refresh", systemImage: "arrow.clockwise") {
-                refresh(source)
-            }
-            Button("Delete", systemImage: "trash", role: .destructive) {
-                sourcePendingDelete = source
-            }
+        let selectedRows = viewModel.selectedUnifiedRows
+        let selectedAddRows = viewModel.selectedAddRows
+        let selectedSources = viewModel.selectedSources(from: sources)
+
+        if selectedRows.isEmpty {
+            Button("Add Selected", systemImage: "plus.circle") {}
+                .disabled(true)
+            Button("Delete Selected", systemImage: "trash", role: .destructive) {}
+                .disabled(true)
         } else {
-            Button("Edit", systemImage: "pencil") {}
-                .disabled(true)
-            Button("Refresh", systemImage: "arrow.clockwise") {}
-                .disabled(true)
+            if !selectedAddRows.isEmpty {
+                Button("Add Selected (\(selectedAddRows.count))", systemImage: "plus.circle") {
+                    viewModel.addSelectedPresets(context: modelContext, onSourceInserted: sourceInserted)
+                }
+            }
+
+            if selectedRows.count == 1, let source = selectedSource {
+                Button("Edit", systemImage: "pencil") {
+                    editingSource = source
+                }
+                Button(source.enabled ? "Pause" : "Enable", systemImage: source.enabled ? "pause.circle" : "checkmark.circle") {
+                    viewModel.updateEnabled(source, enabled: !source.enabled, context: modelContext, onSourcesChanged: sourceChanged)
+                }
+                Button("Refresh", systemImage: "arrow.clockwise") {
+                    refresh(source)
+                }
+            }
+
+            if !selectedSources.isEmpty {
+                Button("Delete Selected (\(selectedSources.count))", systemImage: "trash", role: .destructive) {
+                    sourcesPendingDelete = selectedSources
+                }
+            }
         }
     }
 
@@ -173,7 +188,7 @@ struct SourcesView: View {
     private var tableContent: some View {
         UnifiedSourcesTable(
             rows: viewModel.unifiedRows,
-            selection: $viewModel.selectedUnifiedRowID,
+            selection: $viewModel.selectedUnifiedRowIDs,
             rowAction: handleUnifiedRowAction
         )
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -196,38 +211,36 @@ struct SourcesView: View {
 
     private var sourceDeleteConfirmationBinding: Binding<Bool> {
         Binding(
-            get: { sourcePendingDelete != nil },
+            get: { !sourcesPendingDelete.isEmpty },
             set: { isPresented in
                 if !isPresented {
-                    sourcePendingDelete = nil
+                    sourcesPendingDelete = []
                 }
             }
         )
     }
 
+    private var deleteConfirmationTitle: String {
+        if sourcesPendingDelete.count == 1 {
+            return "Delete this source and its articles?"
+        }
+        return "Delete \(sourcesPendingDelete.count) sources and their articles?"
+    }
+
+    private var deleteConfirmationButtonTitle: String {
+        sourcesPendingDelete.count == 1 ? "Delete Source" : "Delete \(sourcesPendingDelete.count) Sources"
+    }
+
     private func handleUnifiedRowAction(_ row: SourcesUnifiedRowDisplayItem) {
         switch row.action {
         case .add:
-            guard let preset = row.preset else { return }
-            viewModel.addPreset(
-                PresetRowDisplayItem(
-                    id: preset.id,
-                    preset: preset,
-                    title: row.title,
-                    iconName: row.iconName,
-                    tags: row.tags,
-                    canonicalURLString: row.canonicalURLString,
-                    isAdded: false
-                ),
-                context: modelContext,
-                onSourceInserted: sourceInserted
-            )
+            viewModel.addPreset(row, context: modelContext, onSourceInserted: sourceInserted)
         case .remove:
             guard let sourceID = row.sourceID,
                   let source = sources.first(where: { $0.id == sourceID }) else {
                 return
             }
-            sourcePendingDelete = source
+            sourcesPendingDelete = [source]
         }
     }
 
@@ -464,7 +477,7 @@ struct SourcesPageShell<HeaderActions: View, BuilderContent: View, TableControls
 struct UnifiedSourcesTable: View {
     @Environment(\.newsprintTheme) private var theme
     let rows: [SourcesUnifiedRowDisplayItem]
-    @Binding var selection: String?
+    @Binding var selection: Set<String>
     let rowAction: (SourcesUnifiedRowDisplayItem) -> Void
 
     var body: some View {

@@ -15,8 +15,10 @@ struct RootView: View {
     @State private var focusedArticleID: String?
     @State private var previewArticleID: String?
     @State private var searchText = ""
+    @State private var appliedSearchText = ""
     @State private var feedSort: ArticleFeedSort = .hot
     @State private var feedKindFilter: ArticleFeedKindFilter = .all
+    @State private var searchDebounceTask: Task<Void, Never>?
     @AppStorage("newsprint.previewMode") private var previewModeRawValue = PreviewMode.reader.rawValue
     @AppStorage("newsprint.previewPaneCollapsed") private var isPreviewCollapsed = false
     @FocusState private var searchFocused: Bool
@@ -74,10 +76,7 @@ struct RootView: View {
         })
 
         view = AnyView(view.onChange(of: searchText) {
-            expandedArticleID = nil
-            if selection.isArticleFeedSelection {
-                reloadFeed()
-            }
+            scheduleSearchReload()
         })
 
         view = AnyView(view.onChange(of: feedSort) {
@@ -205,8 +204,9 @@ struct RootView: View {
                 expandedArticleID: $expandedArticleID,
                 focusedArticleID: $focusedArticleID,
                 isLoading: feedStore.isLoading,
-                isPreparingFeed: feedStore.isPreparingFeed,
-                isRefreshing: agentController.isRefreshing || feedStore.isPreparingFeed,
+                isPreparingFeed: feedStore.isPreparingFeed || agentController.isPreparingFeed,
+                isRefreshing: agentController.isRefreshing,
+                refreshProgress: agentController.refreshProgress,
                 isActive: selection.isArticleFeedSelection,
                 hasLoadedInitialPage: feedStore.hasLoadedInitialPage,
                 previewArticle: previewArticle,
@@ -350,10 +350,30 @@ struct RootView: View {
     private func reloadFeed() {
         feedStore.reloadIfNeeded(
             filter: activeFilter,
-            searchText: searchText,
+            searchText: appliedSearchText,
             sort: feedSort,
             kindFilter: feedKindFilter
         )
+    }
+
+    private func scheduleSearchReload() {
+        searchDebounceTask?.cancel()
+        let pendingSearchText = searchText
+        searchDebounceTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: SearchDebouncePolicy.delayNanoseconds)
+            guard !Task.isCancelled else { return }
+            applySearchText(pendingSearchText)
+        }
+    }
+
+    private func applySearchText(_ text: String) {
+        let normalizedSearchText = SearchDebouncePolicy.normalized(text)
+        guard appliedSearchText != normalizedSearchText else { return }
+        appliedSearchText = normalizedSearchText
+        expandedArticleID = nil
+        if selection.isArticleFeedSelection {
+            reloadFeed()
+        }
     }
 
     private func reloadFeedAfterBulkChange() {

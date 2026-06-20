@@ -230,3 +230,43 @@ import Testing
     #expect(row.sourceID == nil)
     #expect(row.preset == preset)
 }
+
+@Test func unifiedSourcesSelectionReturnsRowsInDisplayOrderAndPrunesMissingRows() throws {
+    let rows = [
+        SourcesUnifiedRowDisplayItem(
+            id: "a",
+            title: "A",
+            iconName: "rss",
+            tags: [],
+            canonicalURLString: "https://a.example.com/feed.xml",
+            preset: nil,
+            sourceID: nil,
+            action: .add,
+            health: .healthy,
+            healthText: "Healthy",
+            lastErrorText: nil,
+            enabled: false
+        ),
+        SourcesUnifiedRowDisplayItem(
+            id: "b",
+            title: "B",
+            iconName: "rss",
+            tags: [],
+            canonicalURLString: "https://b.example.com/feed.xml",
+            preset: nil,
+            sourceID: nil,
+            action: .remove,
+            health: .healthy,
+            healthText: "Healthy",
+            lastErrorText: nil,
+            enabled: true
+        )
+    ]
+    var selection = SourcesUnifiedSelectionState(selectedRowIDs: ["b", "missing", "a"])
+
+    #expect(selection.selectedRows(in: rows).map(\.id) == ["a", "b"])
+
+    selection.pruneMissingRows(in: rows)
+
+    #expect(selection.selectedRowIDs == ["a", "b"])
+}

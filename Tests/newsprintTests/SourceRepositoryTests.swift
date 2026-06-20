@@ -45,3 +45,50 @@ import Testing
     #expect(try context.fetch(FetchDescriptor<Article>()).isEmpty)
 }
 
+@MainActor
+@Test func sourceRepositoryDeletesMultipleSourcesAndTheirArticles() throws {
+    let container = try ModelContainer(
+        for: Source.self, Article.self, AppSettings.self, FilterRule.self,
+        configurations: ModelConfiguration(isStoredInMemoryOnly: true)
+    )
+    let context = container.mainContext
+    let repository = SwiftDataSourceRepository(context: context)
+    let first = Source(title: "First", url: URL(string: "https://example.com/first.xml")!)
+    let second = Source(title: "Second", url: URL(string: "https://example.com/second.xml")!)
+    let kept = Source(title: "Kept", url: URL(string: "https://example.com/kept.xml")!)
+    let firstArticle = Article(
+        id: "first-article",
+        sourceID: first.id,
+        sourceTitle: first.title,
+        title: "First Article",
+        url: URL(string: "https://example.com/first")!
+    )
+    let secondArticle = Article(
+        id: "second-article",
+        sourceID: second.id,
+        sourceTitle: second.title,
+        title: "Second Article",
+        url: URL(string: "https://example.com/second")!
+    )
+    let keptArticle = Article(
+        id: "kept-article",
+        sourceID: kept.id,
+        sourceTitle: kept.title,
+        title: "Kept Article",
+        url: URL(string: "https://example.com/kept")!
+    )
+    for model in [first, second, kept] {
+        context.insert(model)
+    }
+    for model in [firstArticle, secondArticle, keptArticle] {
+        context.insert(model)
+    }
+    try context.save()
+
+    try repository.delete([first, second])
+
+    let remainingSources = try context.fetch(FetchDescriptor<Source>())
+    let remainingArticles = try context.fetch(FetchDescriptor<Article>())
+    #expect(remainingSources.map(\.id) == [kept.id])
+    #expect(remainingArticles.map(\.id) == ["kept-article"])
+}

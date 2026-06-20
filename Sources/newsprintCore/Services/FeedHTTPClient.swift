@@ -22,7 +22,9 @@ public enum FeedHTTPError: Error, LocalizedError {
 }
 
 public struct FeedHTTPClient: @unchecked Sendable {
-    public static let sourceRefreshTimeout: TimeInterval = 8
+    public static let fastSourceRefreshTimeout: TimeInterval = 4
+    public static let recoverySourceRefreshTimeout: TimeInterval = 16
+    public static let sourceRefreshTimeout: TimeInterval = fastSourceRefreshTimeout
     public static let defaultTimeout: TimeInterval = 20
     private let session: URLSession
 
@@ -35,11 +37,15 @@ public struct FeedHTTPClient: @unchecked Sendable {
     }
 
     public func fetch(source: SourceSnapshot) async throws -> FeedHTTPResponse {
+        try await fetch(source: source, timeout: Self.sourceRefreshTimeout)
+    }
+
+    public func fetch(source: SourceSnapshot, timeout: TimeInterval) async throws -> FeedHTTPResponse {
         try await fetch(
             url: source.url,
             etag: source.etag,
             lastModified: source.lastModified,
-            timeout: Self.sourceRefreshTimeout
+            timeout: timeout
         )
     }
 

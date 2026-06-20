@@ -25,7 +25,7 @@ final class SourcesViewModel: ObservableObject {
     @Published var selectedSection: SourcesPageSection = .presets
     @Published var selectedSourceID: UUID?
     @Published var selectedPresetID: String?
-    @Published var selectedUnifiedRowID: String?
+    @Published var selectedUnifiedRowIDs: Set<String> = []
     @Published private(set) var sourceRows: [SourceRowDisplayItem] = []
     @Published private(set) var presetRows: [PresetRowDisplayItem] = SourceDisplayItemBuilder.presetRows(for: [])
     @Published private(set) var unifiedRows: [SourcesUnifiedRowDisplayItem] = SourceDisplayItemBuilder.unifiedRows(for: [])
@@ -64,16 +64,34 @@ final class SourcesViewModel: ObservableObject {
     }
 
     var selectedUnifiedRow: SourcesUnifiedRowDisplayItem? {
-        guard let selectedUnifiedRowID else { return nil }
-        return unifiedRows.first { $0.id == selectedUnifiedRowID }
+        selectedUnifiedRows.first
+    }
+
+    var selectedUnifiedRows: [SourcesUnifiedRowDisplayItem] {
+        SourcesUnifiedSelectionState(selectedRowIDs: selectedUnifiedRowIDs)
+            .selectedRows(in: unifiedRows)
+    }
+
+    var selectedAddRows: [SourcesUnifiedRowDisplayItem] {
+        selectedUnifiedRows.filter { $0.action == .add }
+    }
+
+    var selectedRemoveRows: [SourcesUnifiedRowDisplayItem] {
+        selectedUnifiedRows.filter { $0.action == .remove && $0.sourceID != nil }
     }
 
     func selectedSource(from sources: [Source]) -> Source? {
+        guard selectedUnifiedRows.count <= 1 else { return nil }
         if let sourceID = selectedUnifiedRow?.sourceID {
             return sources.first { $0.id == sourceID }
         }
         guard let selectedSourceID else { return nil }
         return sources.first { $0.id == selectedSourceID }
+    }
+
+    func selectedSources(from sources: [Source]) -> [Source] {
+        let selectedSourceIDs = Set(selectedRemoveRows.compactMap(\.sourceID))
+        return sources.filter { selectedSourceIDs.contains($0.id) }
     }
 
     func selectPreset(_ row: PresetRowDisplayItem) {
@@ -165,6 +183,63 @@ final class SourcesViewModel: ObservableObject {
         }
     }
 
+    func addPreset(_ row: SourcesUnifiedRowDisplayItem, context: ModelContext, onSourceInserted: (Source) -> Void) {
+        guard let preset = row.preset else { return }
+        addPreset(
+            PresetRowDisplayItem(
+                id: preset.id,
+                preset: preset,
+                title: row.title,
+                iconName: row.iconName,
+                tags: row.tags,
+                canonicalURLString: row.canonicalURLString,
+                isAdded: row.action == .remove
+            ),
+            context: context,
+            onSourceInserted: onSourceInserted
+        )
+    }
+
+    func addSelectedPresets(context: ModelContext, onSourceInserted: (Source) -> Void) {
+        let rows = selectedAddRows
+        guard !rows.isEmpty else { return }
+
+        var added = 0
+        var lastError: String?
+        for row in rows {
+            guard let preset = row.preset else { continue }
+            let source = Source(
+                title: preset.title,
+                url: preset.url,
+                kind: preset.kind,
+                category: preset.category
+            )
+
+            do {
+                try SwiftDataSourceRepository(context: context).save(source)
+                noteSourceInserted(
+                    source,
+                    presetID: row.id,
+                    canonicalURLString: row.canonicalURLString,
+                    selectInserted: false
+                )
+                onSourceInserted(source)
+                added += 1
+            } catch {
+                lastError = error.localizedDescription
+            }
+        }
+
+        if added > 0 {
+            selectedUnifiedRowIDs = Set(rows.map(\.id))
+            sourceMessage = "Added \(added) \(added == 1 ? "source" : "sources")."
+            errorMessage = nil
+        } else if let lastError {
+            errorMessage = lastError
+            sourceMessage = nil
+        }
+    }
+
     func addHackerNewsFeed(context: ModelContext, onSourcesChanged: () -> Void) {
         guard let configuration = hackerNewsConfiguration(reportErrors: true) else {
             return
@@ -226,6 +301,27 @@ final class SourcesViewModel: ObservableObject {
             return true
         } catch {
             errorMessage = "Could not delete source: \(error.localizedDescription)"
+            sourceMessage = nil
+            return false
+        }
+    }
+
+    @discardableResult
+    func deleteSources(_ sources: [Source], context: ModelContext, onSourcesChanged: () -> Void) -> Bool {
+        guard !sources.isEmpty else { return false }
+        do {
+            try SwiftDataSourceRepository(context: context).delete(sources)
+            let deletedIDs = Set(sources.map(\.id))
+            selectedUnifiedRowIDs.subtract(unifiedRows.filter { row in
+                guard let sourceID = row.sourceID else { return false }
+                return deletedIDs.contains(sourceID)
+            }.map(\.id))
+            sourceMessage = "Deleted \(sources.count) \(sources.count == 1 ? "source" : "sources")."
+            errorMessage = nil
+            onSourcesChanged()
+            return true
+        } catch {
+            errorMessage = "Could not delete sources: \(error.localizedDescription)"
             sourceMessage = nil
             return false
         }
@@ -329,7 +425,12 @@ final class SourcesViewModel: ObservableObject {
         try SwiftDataSourceRepository(context: context).saveIfNew(source)
     }
 
-    private func noteSourceInserted(_ source: Source, presetID: String, canonicalURLString: String) {
+    private func noteSourceInserted(
+        _ source: Source,
+        presetID: String,
+        canonicalURLString: String,
+        selectInserted: Bool = true
+    ) {
         if !sourceRows.contains(where: { $0.id == source.id }) {
             sourceRows.append(SourceDisplayItemBuilder.sourceRow(for: source))
             sourceRows.sort {
@@ -360,7 +461,9 @@ final class SourcesViewModel: ObservableObject {
             )
         }
         selectedPresetID = presetID
-        selectedUnifiedRowID = presetID
+        if selectInserted {
+            selectedUnifiedRowIDs = [presetID]
+        }
         locallyInsertedSourceIDs.insert(source.id)
         pruneMissingSelections()
     }
@@ -386,9 +489,9 @@ final class SourcesViewModel: ObservableObject {
         selection.pruneMissingSelections(sourceRows: sourceRows, presetRows: presetRows)
         selectedSourceID = selection.selectedSourceID
         selectedPresetID = selection.selectedPresetID
-        if selectedUnifiedRowID != nil, selectedUnifiedRow == nil {
-            selectedUnifiedRowID = nil
-        }
+        var unifiedSelection = SourcesUnifiedSelectionState(selectedRowIDs: selectedUnifiedRowIDs)
+        unifiedSelection.pruneMissingRows(in: unifiedRows)
+        selectedUnifiedRowIDs = unifiedSelection.selectedRowIDs
     }
 
     private func hackerNewsConfiguration(reportErrors: Bool) -> HackerNewsFeedConfiguration? {

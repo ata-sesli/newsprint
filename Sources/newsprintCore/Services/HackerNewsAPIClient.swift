@@ -36,13 +36,16 @@ public struct HackerNewsAPIClient: Sendable {
         self.httpClient = httpClient
     }
 
-    public func fetchDrafts(for source: SourceSnapshot) async throws -> [ArticleDraft] {
+    public func fetchDrafts(
+        for source: SourceSnapshot,
+        timeout: TimeInterval = FeedHTTPClient.sourceRefreshTimeout
+    ) async throws -> [ArticleDraft] {
         guard let configuration = HackerNewsFeedURLBuilder.configuration(from: source.url) else {
             throw HackerNewsAPIError.invalidSourceURL(source.url)
         }
 
         let totalStartedAt = Date()
-        let itemIDs = try await fetchItemIDs(for: configuration)
+        let itemIDs = try await fetchItemIDs(for: configuration, timeout: timeout)
         let wantedCount = HackerNewsFeedURLBuilder.effectiveCount(for: configuration)
         var drafts: [ArticleDraft] = []
         var fetchedItems = 0
@@ -57,7 +60,7 @@ public struct HackerNewsAPIClient: Sendable {
             nextIndex += chunkCount
 
             let items = try await BoundedTaskGroup.throwingMap(chunkIDs, limit: chunkCount) { itemID in
-                try await fetchItem(id: itemID)
+                try await fetchItem(id: itemID, timeout: timeout)
             }
             fetchedItems += chunkIDs.count
 
@@ -86,11 +89,11 @@ public struct HackerNewsAPIClient: Sendable {
         return drafts
     }
 
-    private func fetchItemIDs(for configuration: HackerNewsFeedConfiguration) async throws -> [Int] {
+    private func fetchItemIDs(for configuration: HackerNewsFeedConfiguration, timeout: TimeInterval) async throws -> [Int] {
         let startedAt = Date()
         let response = try await httpClient.fetch(
             url: listURL(for: configuration.kind),
-            timeout: FeedHTTPClient.sourceRefreshTimeout
+            timeout: timeout
         )
         guard let itemIDs = try JSONSerialization.jsonObject(with: response.data) as? [Int] else {
             throw HackerNewsAPIError.invalidItemList
@@ -101,10 +104,10 @@ public struct HackerNewsAPIClient: Sendable {
         return itemIDs
     }
 
-    private func fetchItem(id: Int) async throws -> HackerNewsItem? {
+    private func fetchItem(id: Int, timeout: TimeInterval) async throws -> HackerNewsItem? {
         let response = try await httpClient.fetch(
             url: itemURL(id: id),
-            timeout: FeedHTTPClient.sourceRefreshTimeout
+            timeout: timeout
         )
         let item = try JSONDecoder().decode(HackerNewsItem.self, from: response.data)
         if item.deleted == true || item.dead == true {
