@@ -78,7 +78,7 @@ final class NewsprintAgentController: ObservableObject {
             isPreparingFeed = false
 
             let recoverySummary = await refreshActor.refreshRecovery(
-                excludingSourceIDs: Set(fastSummary.sourceIDs),
+                excludingSourceIDs: fastSummary.sourceIDsSucceededOrNotModified,
                 progressHandler: progressSink
             )
             if recoverySummary.hasFeedChanges {

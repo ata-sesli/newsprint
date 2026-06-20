@@ -30,6 +30,7 @@ public enum HackerNewsAPIError: Error, LocalizedError {
 
 public struct HackerNewsAPIClient: Sendable {
     private static let itemRequestConcurrency = 10
+    private static let itemRequestTimeout: TimeInterval = 4
     private let httpClient: FeedHTTPClient
 
     public init(httpClient: FeedHTTPClient = FeedHTTPClient()) {
@@ -60,7 +61,7 @@ public struct HackerNewsAPIClient: Sendable {
             nextIndex += chunkCount
 
             let items = try await BoundedTaskGroup.throwingMap(chunkIDs, limit: chunkCount) { itemID in
-                try await fetchItem(id: itemID, timeout: timeout)
+                try await fetchItem(id: itemID, timeout: Self.itemRequestTimeout)
             }
             fetchedItems += chunkIDs.count
 

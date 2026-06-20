@@ -34,12 +34,16 @@ final class ArticleFeedStore: ObservableObject {
     private var prefetchTask: Task<Void, Never>?
     private var countsTask: Task<Void, Never>?
     private var tagTask: Task<Void, Never>?
+    private var pendingPrepareTask: Task<Void, Never>?
+    private var pendingPreparedSummary: FeedRefreshSummary?
+    private var pendingPreparedInsertedItems: [ArticleFeedDisplayItem] = []
 
     deinit {
         loadTask?.cancel()
         prefetchTask?.cancel()
         countsTask?.cancel()
         tagTask?.cancel()
+        pendingPrepareTask?.cancel()
     }
 
     func configure(container: ModelContainer?) {
@@ -97,6 +101,9 @@ final class ArticleFeedStore: ObservableObject {
         let generation = loadGeneration
         isLoading = true
         prefetchTask?.cancel()
+        pendingPrepareTask?.cancel()
+        pendingPreparedSummary = nil
+        pendingPreparedInsertedItems = []
         if loadedItems.isEmpty {
             hasLoadedInitialPage = false
         }
@@ -217,18 +224,64 @@ final class ArticleFeedStore: ObservableObject {
         guard summary.hasFeedChanges else {
             return
         }
-        pendingRefreshSummary = summary
+        pendingPrepareTask?.cancel()
+        pendingRefreshSummary = nil
+        pendingPreparedSummary = nil
+        pendingPreparedInsertedItems = []
+
+        guard summary.retentionDeletedCount == 0,
+              !summary.insertedArticleIDs.isEmpty,
+              currentSearchText.isEmpty,
+              let readActor else {
+            return
+        }
+
+        let generation = loadGeneration
+        pendingPrepareTask = Task { [weak self] in
+            do {
+                let insertedItems = try await readActor.fetchSnapshots(ids: summary.insertedArticleIDs)
+                guard !Task.isCancelled else { return }
+                await MainActor.run {
+                    self?.storePreparedPendingRefresh(
+                        summary,
+                        insertedItems: insertedItems,
+                        generation: generation
+                    )
+                }
+            } catch {
+                guard !Task.isCancelled else { return }
+                await MainActor.run {
+                    self?.pendingPrepareTask = nil
+                }
+            }
+        }
     }
 
     func dismissPendingRefresh() {
         pendingRefreshSummary = nil
+        pendingPrepareTask?.cancel()
+        pendingPrepareTask = nil
+        pendingPreparedSummary = nil
+        pendingPreparedInsertedItems = []
     }
 
     func applyPendingRefresh() {
-        guard let pendingRefreshSummary else {
+        guard let summary = pendingRefreshSummary else {
             return
         }
-        prepareAfterRefresh(summary: pendingRefreshSummary)
+        pendingRefreshSummary = nil
+
+        if pendingPreparedSummary == summary {
+            let insertedItems = pendingPreparedInsertedItems
+            pendingPreparedSummary = nil
+            pendingPreparedInsertedItems = []
+            pendingPrepareTask = nil
+            refreshCounts()
+            applyInsertedItems(insertedItems, generation: loadGeneration)
+            return
+        }
+
+        prepareAfterRefresh(summary: summary)
     }
 
     @discardableResult
@@ -318,6 +371,20 @@ final class ArticleFeedStore: ObservableObject {
                 }
             }
         }
+    }
+
+    private func storePreparedPendingRefresh(
+        _ summary: FeedRefreshSummary,
+        insertedItems: [ArticleFeedDisplayItem],
+        generation: Int
+    ) {
+        pendingPrepareTask = nil
+        guard generation == loadGeneration else {
+            return
+        }
+        pendingPreparedSummary = summary
+        pendingPreparedInsertedItems = insertedItems
+        pendingRefreshSummary = summary
     }
 
     private func switchSort(_ sort: ArticleFeedSort) {

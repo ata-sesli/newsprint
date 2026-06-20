@@ -63,6 +63,24 @@ import Testing
     #expect(!requestedIDs.contains(9_040))
 }
 
+@Test func hackerNewsAPIUsesFourSecondItemTimeoutDuringRecoveryRefresh() async throws {
+    let source = SourceSnapshot(
+        id: UUID(uuidString: "00000000-0000-0000-0000-00000000feed")!,
+        title: "Hacker News Newest",
+        url: try #require(URL(string: "https://hacker-news.firebaseio.com/v0/newstories.json?count=1")),
+        kind: .hackerNews
+    )
+    let listURL = try #require(URL(string: "https://hacker-news.firebaseio.com/v0/newstories.json"))
+    let itemURL = try #require(URL(string: "https://hacker-news.firebaseio.com/v0/item/9901.json"))
+    MockHackerNewsURLProtocol.register("[9901]".data(using: .utf8)!, for: listURL.absoluteString)
+    MockHackerNewsURLProtocol.register(itemJSON(id: 9_901, title: "Timed", points: 12, comments: 2), for: itemURL.absoluteString)
+    let client = HackerNewsAPIClient(httpClient: FeedHTTPClient(session: mockHackerNewsSession()))
+
+    _ = try await client.fetchDrafts(for: source, timeout: FeedHTTPClient.recoverySourceRefreshTimeout)
+
+    #expect(MockHackerNewsURLProtocol.timeout(for: itemURL) == 4)
+}
+
 @Test func hackerNewsArticleMapperUsesSubmittedURLAndMetadata() throws {
     let source = SourceSnapshot(
         id: UUID(uuidString: "00000000-0000-0000-0000-00000000feed")!,
@@ -149,6 +167,7 @@ private final class MockHackerNewsURLProtocol: URLProtocol, @unchecked Sendable 
     nonisolated(unsafe) private static var responses: [URL: Data] = [:]
     nonisolated(unsafe) private static var delays: [URL: TimeInterval] = [:]
     nonisolated(unsafe) private static var events: [(url: URL, isStart: Bool, date: Date)] = []
+    nonisolated(unsafe) private static var timeouts: [URL: TimeInterval] = [:]
     private static let lock = NSLock()
 
     static func register(_ data: Data, for urlString: String, delay: TimeInterval = 0) {
@@ -157,6 +176,12 @@ private final class MockHackerNewsURLProtocol: URLProtocol, @unchecked Sendable 
         responses[url] = data
         delays[url] = delay
         lock.unlock()
+    }
+
+    static func timeout(for url: URL) -> TimeInterval? {
+        lock.lock()
+        defer { lock.unlock() }
+        return timeouts[url]
     }
 
     static func requestedItemIDs(_ ids: [Int]) -> [Int] {
@@ -214,6 +239,7 @@ private final class MockHackerNewsURLProtocol: URLProtocol, @unchecked Sendable 
             return
         }
         Self.record(url: url, isStart: true)
+        Self.recordTimeout(request.timeoutInterval, for: url)
         guard let delay = Self.delay(for: url), delay > 0 else {
             send(statusCode: 200, data: data)
             Self.record(url: url, isStart: false)
@@ -244,6 +270,12 @@ private final class MockHackerNewsURLProtocol: URLProtocol, @unchecked Sendable 
     private static func record(url: URL, isStart: Bool) {
         lock.lock()
         events.append((url: url, isStart: isStart, date: Date()))
+        lock.unlock()
+    }
+
+    private static func recordTimeout(_ timeout: TimeInterval, for url: URL) {
+        lock.lock()
+        timeouts[url] = timeout
         lock.unlock()
     }
 

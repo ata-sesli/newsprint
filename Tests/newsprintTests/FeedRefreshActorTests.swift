@@ -70,7 +70,7 @@ import Testing
         httpClient: FeedHTTPClient(session: mockFeedSession())
     )
 
-    let summary = await actor.refreshAll()
+    let summary = await actor.refreshFast()
     let refreshedSource = try #require(try context.fetch(FetchDescriptor<Source>()).first)
 
     #expect(summary.refreshedSourceCount == 0)
@@ -106,6 +106,36 @@ import Testing
 
     #expect(summary.fastInsertedCount == 0)
     #expect(summary.recoveryInsertedCount == 2)
+    #expect(summary.recoveredSourceCount == 1)
+    #expect(refreshedSource.lastErrorMessage == nil)
+    #expect(refreshedSource.consecutiveFailureCount == 0)
+}
+
+@MainActor
+@Test func feedRefreshActorRetriesFastLaneFailuresInRecoveryLane() async throws {
+    let container = try refreshActorTestContainer()
+    let context = container.mainContext
+    let feedURL = URL(string: "https://example.com/fast-fails-then-recovers.xml")!
+    context.insert(Source(title: "Flaky RSS", url: feedURL, kind: .rss))
+    try context.save()
+
+    MockFeedURLProtocol.registerSequence([
+        .failure(statusCode: 504),
+        .success(try fixtureData("rss", extension: "xml"))
+    ], for: feedURL)
+    let actor = FeedRefreshActor(
+        modelContainer: container,
+        httpClient: FeedHTTPClient(session: mockFeedSession())
+    )
+
+    let summary = await actor.refreshAll()
+    let refreshedSource = try #require(try context.fetch(FetchDescriptor<Source>()).first)
+    let requestedURLs = MockFeedURLProtocol.requestedURLs(matching: [feedURL])
+
+    #expect(requestedURLs == [feedURL, feedURL])
+    #expect(summary.fastInsertedCount == 0)
+    #expect(summary.recoveryInsertedCount == 2)
+    #expect(summary.failedCount == 1)
     #expect(summary.recoveredSourceCount == 1)
     #expect(refreshedSource.lastErrorMessage == nil)
     #expect(refreshedSource.consecutiveFailureCount == 0)
@@ -342,6 +372,7 @@ private final class MockFeedURLProtocol: URLProtocol, @unchecked Sendable {
     }
 
     nonisolated(unsafe) private static var responses: [URL: Response] = [:]
+    nonisolated(unsafe) private static var responseSequences: [URL: [Response]] = [:]
     nonisolated(unsafe) private static var delays: [URL: TimeInterval] = [:]
     nonisolated(unsafe) private static var events: [(url: URL, isStart: Bool, date: Date)] = []
     private static let lock = NSLock()
@@ -349,6 +380,13 @@ private final class MockFeedURLProtocol: URLProtocol, @unchecked Sendable {
     static func register(_ response: Response, for url: URL, delay: TimeInterval = 0) {
         lock.lock()
         responses[url] = response
+        delays[url] = delay
+        lock.unlock()
+    }
+
+    static func registerSequence(_ sequence: [Response], for url: URL, delay: TimeInterval = 0) {
+        lock.lock()
+        responseSequences[url] = sequence
         delays[url] = delay
         lock.unlock()
     }
@@ -413,6 +451,11 @@ private final class MockFeedURLProtocol: URLProtocol, @unchecked Sendable {
     private static func response(for url: URL) -> Response? {
         lock.lock()
         defer { lock.unlock() }
+        if var sequence = responseSequences[url], !sequence.isEmpty {
+            let response = sequence.removeFirst()
+            responseSequences[url] = sequence
+            return response
+        }
         return responses[url]
     }
 

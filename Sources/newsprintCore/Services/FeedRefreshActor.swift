@@ -39,6 +39,7 @@ public struct FeedRefreshSummary: Sendable, Equatable {
     public let skippedCount: Int
     public let insertedArticleIDs: [String]
     public let failedCount: Int
+    public let failedSourceIDs: [UUID]
     public let retentionDeletedCount: Int
     public let hnInsertedCount: Int
     public let otherInsertedCount: Int
@@ -55,6 +56,7 @@ public struct FeedRefreshSummary: Sendable, Equatable {
         skippedCount: Int = 0,
         insertedArticleIDs: [String] = [],
         failedCount: Int = 0,
+        failedSourceIDs: [UUID] = [],
         retentionDeletedCount: Int = 0,
         hnInsertedCount: Int = 0,
         otherInsertedCount: Int = 0,
@@ -70,6 +72,7 @@ public struct FeedRefreshSummary: Sendable, Equatable {
         self.skippedCount = skippedCount
         self.insertedArticleIDs = insertedArticleIDs
         self.failedCount = failedCount
+        self.failedSourceIDs = failedSourceIDs
         self.retentionDeletedCount = retentionDeletedCount
         self.hnInsertedCount = hnInsertedCount
         self.otherInsertedCount = otherInsertedCount
@@ -185,6 +188,7 @@ public extension FeedRefreshSummary {
             skippedCount: skippedCount + other.skippedCount,
             insertedArticleIDs: insertedArticleIDs + other.insertedArticleIDs,
             failedCount: failedCount + other.failedCount,
+            failedSourceIDs: failedSourceIDs + other.failedSourceIDs,
             retentionDeletedCount: retentionDeletedCount + other.retentionDeletedCount,
             hnInsertedCount: hnInsertedCount + other.hnInsertedCount,
             otherInsertedCount: otherInsertedCount + other.otherInsertedCount,
@@ -194,6 +198,10 @@ public extension FeedRefreshSummary {
             deadSourceCount: max(deadSourceCount, other.deadSourceCount),
             phaseTimings: phaseTimings + other.phaseTimings
         )
+    }
+
+    var sourceIDsSucceededOrNotModified: Set<UUID> {
+        Set(sourceIDs).subtracting(failedSourceIDs)
     }
 }
 
@@ -289,7 +297,7 @@ public actor FeedRefreshActor: ModelActor {
     ) async -> FeedRefreshSummary {
         let fastSummary = await refreshFast(progressHandler: progressHandler)
         let recoverySummary = await refreshRecovery(
-            excludingSourceIDs: Set(fastSummary.sourceIDs),
+            excludingSourceIDs: fastSummary.sourceIDsSucceededOrNotModified,
             progressHandler: progressHandler
         )
         return fastSummary.merging(recoverySummary)
@@ -386,6 +394,7 @@ public actor FeedRefreshActor: ModelActor {
                 skippedCount: sourceSummaries.reduce(0) { $0 + $1.skippedCount },
                 insertedArticleIDs: sourceSummaries.flatMap(\.insertedArticleIDs),
                 failedCount: sourceSummaries.filter(\.failed).count,
+                failedSourceIDs: sourceSummaries.filter(\.failed).map(\.sourceID),
                 retentionDeletedCount: retentionDeletedCount,
                 hnInsertedCount: hnInsertedCount,
                 otherInsertedCount: otherInsertedCount,
