@@ -13,6 +13,7 @@ The app is designed for controlled personal reading:
 - Apply local filtering rules to hide, star, read, boost, or tag articles.
 - Import and export sources through OPML.
 - Export starred articles as Markdown.
+- Clean non-starred articles from Home while preserving starred items.
 - Automatically clean up old unstarred articles while preserving starred items.
 
 Newsprint is not a social feed, cloud reader, recommendation engine, or account-based sync product. It is a personal, local, tunable reader for technical news and blogs.
@@ -56,6 +57,14 @@ Source records keep fetch metadata:
 - Enabled/disabled state.
 - Category.
 
+The Sources screen uses one unified table for presets and added sources:
+
+- Presets show a `+` action when they are not installed.
+- Added presets and custom sources show a trash action.
+- Command-click and Shift-click can select multiple rows for batch add/remove.
+- Added sources can still be edited, refreshed, paused, or deleted from row actions and context menus.
+- Health is shown as `Healthy`, `Unhealthy`, or `Dead` based on recent refresh results.
+
 ### Hacker News
 
 Hacker News is handled as a first-class source type through the official Hacker News Firebase API.
@@ -74,6 +83,8 @@ It also supports tuning:
 - Minimum points.
 - Minimum comments.
 - Item count.
+
+Existing legacy HNRSS source URLs can be interpreted as configuration, but refreshes use the official Firebase API instead of HNRSS.
 
 HN articles get special treatment in the feed:
 
@@ -96,10 +107,11 @@ The feed uses:
 - A pinned control header with clock, counts, search, sorting, and filter chips.
 - Hot/Newest sort modes.
 - Inbox, Unread, Today, Starred, Hidden filters.
-- Source and tag filters.
+- Source, tag, and HN-family filters.
 - Large expandable article cards.
 - One expanded card at a time.
 - Context menus and inline article actions.
+- Four-line expanded text previews with a Read More control for longer text.
 
 Article actions include:
 
@@ -110,6 +122,7 @@ Article actions include:
 - Open HN thread when available.
 - Copy link.
 - Open in side preview.
+- Clean Home, which removes all non-starred articles.
 
 ### Reader and Web Preview
 
@@ -185,6 +198,7 @@ Filters:
 - Today.
 - Starred.
 - Hidden.
+- HN family.
 - Source.
 - Tag.
 
@@ -192,6 +206,8 @@ Sorting:
 
 - **Hot**: score, then published date, then fetched date.
 - **Newest**: published date, then fetched date, then score.
+
+`Hot` and `Newest` are global display orders. HN is a filter family, not a separate ranking mode.
 
 ### Data Ownership
 
@@ -259,8 +275,8 @@ Menu bar icon choices:
 The menu bar icon is dynamic:
 
 - Refreshing uses `arrow.clockwise`.
-- Sync/error state uses `exclamationmark.triangle.fill`.
 - Normal state uses the selected icon.
+- Source-level failures stay in Sources health/status instead of changing the menu bar icon to an error state.
 
 ## Architecture
 
@@ -298,6 +314,7 @@ Important services:
 
 - `FeedHTTPClient`
 - `FeedParser`
+- `HackerNewsAPIClient`
 - `FeedDiscoveryService`
 - `FeedRefreshActor`
 - `ArticleFeedReadActor`
@@ -358,12 +375,32 @@ Key UI pieces:
 
 ### Data Flow
 
+RSS, Atom, JSON Feed, YouTube, and discovered blog feeds use the generic feed path:
+
 ```text
 Source
   ↓
 FeedHTTPClient
   ↓
 FeedParser
+  ↓
+ArticleDraft
+  ↓
+RuleEngine
+  ↓
+SwiftDataArticleRepository
+  ↓
+ArticleFeedStore
+  ↓
+ArticleFeedCollectionView
+```
+
+Hacker News sources use the HN API path:
+
+```text
+Hacker News Source
+  ↓
+HackerNewsAPIClient
   ↓
 ArticleDraft
   ↓
@@ -435,6 +472,22 @@ Refresh persistence is batched:
 - Existing article IDs are checked in batches.
 - New articles are inserted in batch.
 - The feed reloads once after bulk data changes.
+
+Refresh is staged:
+
+- Healthy sources use a 4-second fast lane.
+- Degraded sources retry in a 16-second recovery lane.
+- Dead sources are skipped during automatic refresh until explicitly refreshed.
+- The current feed stays visible while network fetching is in progress.
+- The header shows source progress during refresh.
+- The loading animation is reserved for final feed preparation and cache swapping.
+- Background and recovery refreshes can produce a quiet pending update instead of immediately reordering what you are reading.
+
+Feed sorting is cached:
+
+- Hot and Newest sort bundles are prepared together when feed data changes.
+- Switching Hot/Newest uses cached in-memory snapshots when possible.
+- A missing or stale sort cache shows the loading state briefly while rebuilding off-main.
 
 Startup behavior is optimized:
 
@@ -561,11 +614,15 @@ The test suite covers:
 - HTML text extraction.
 - HN metadata parsing.
 - Hacker News Firebase API URL building and legacy HNRSS source parsing.
+- Hacker News API mapping and refresh behavior.
+- Source health and staged refresh behavior.
 - Rule engine behavior.
 - Retention cleanup.
 - Article repositories.
 - Source repositories.
 - Paged feed repository behavior.
+- Feed snapshot/window behavior.
+- Feed sort cache behavior.
 - Search and filtering.
 - OPML import/export.
 - Starred Markdown export.
