@@ -19,6 +19,7 @@ public enum ArticleFeedSort: String, Codable, CaseIterable, Sendable, Identifiab
 public enum ArticleFeedKindFilter: String, Codable, CaseIterable, Sendable, Identifiable {
     case all
     case hackerNews
+    case nonHackerNews
 
     public var id: String { rawValue }
 }
@@ -73,6 +74,8 @@ public struct ArticleSearchService {
             return true
         case .hackerNews:
             return sourceKindsByID[article.sourceID] == .hackerNews
+        case .nonHackerNews:
+            return sourceKindsByID[article.sourceID] != .hackerNews
         }
     }
 

@@ -2,7 +2,7 @@ import AppKit
 import Foundation
 import newsprintCore
 
-typealias ArticleFeedDisplayItem = ArticleFeedSnapshot
+typealias ArticleFeedDisplayItem = ArticleFeedRowSnapshot
 
 struct ArticleFeedAppearance: Equatable {
     let theme: NewsprintTheme

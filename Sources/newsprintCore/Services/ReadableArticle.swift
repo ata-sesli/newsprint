@@ -214,6 +214,10 @@ public enum ArticlePreviewTarget {
     public static func url(for article: ArticleFeedSnapshot) -> URL? {
         article.hackerNewsMetadata?.articleURL ?? article.url
     }
+
+    public static func url(for article: ArticleFeedRowSnapshot) -> URL? {
+        article.hackerNewsMetadata?.articleURL ?? article.previewURL
+    }
 }
 
 public enum ArticleReaderContentPolicy {
@@ -247,6 +251,46 @@ public enum ArticleReaderContentPolicy {
             byline: article.author,
             siteName: article.sourceTitle,
             url: ArticlePreviewTarget.url(for: article) ?? article.url,
+            html: ArticleReaderHTMLSanitizer.paragraphHTML(fromPlainText: text),
+            text: text
+        )
+    }
+
+    public static func localReadableArticle(
+        for article: ArticleFeedRowSnapshot,
+        detail: ArticleDetailSnapshot?,
+        minimumTextLength: Int = 500
+    ) -> ReadableArticle? {
+        guard article.hackerNewsMetadata == nil else {
+            return nil
+        }
+
+        let targetURL = ArticlePreviewTarget.url(for: article) ?? article.url
+        if let contentHTML = detail?.contentHTML {
+            let sanitized = ArticleReaderHTMLSanitizer.sanitize(contentHTML, baseURL: targetURL)
+            if let text = HTMLTextExtractor.text(fromHTML: Optional(sanitized)), text.count >= minimumTextLength {
+                return ReadableArticle(
+                    title: article.title,
+                    byline: article.author,
+                    siteName: article.sourceTitle,
+                    url: targetURL,
+                    html: sanitized,
+                    text: text
+                )
+            }
+        }
+
+        guard let rawText = detail?.contentText ?? detail?.excerpt ?? article.previewText,
+              let text = HTMLTextExtractor.textPreservingParagraphBreaks(fromHTML: rawText),
+              text.count >= minimumTextLength else {
+            return nil
+        }
+
+        return ReadableArticle(
+            title: article.title,
+            byline: article.author,
+            siteName: article.sourceTitle,
+            url: targetURL,
             html: ArticleReaderHTMLSanitizer.paragraphHTML(fromPlainText: text),
             text: text
         )

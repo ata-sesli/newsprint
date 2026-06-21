@@ -14,25 +14,29 @@ final class ArticlePreviewViewModel: ObservableObject {
 
     @Published private(set) var state: State = .idle
     private var currentArticleID: String?
+    private var currentDetailToken: String?
     private let fetcher = ReadableArticleFetcher()
     private let extractor = ReadableArticleExtractor()
 
-    func load(article: ArticleFeedDisplayItem?) async {
+    func load(article: ArticleFeedDisplayItem?, detail: ArticleDetailSnapshot?) async {
         guard let article, let url = ArticlePreviewTarget.url(for: article) else {
             currentArticleID = nil
+            currentDetailToken = nil
             state = .idle
             return
         }
 
-        guard currentArticleID != article.id else {
+        let detailToken = detail == nil ? "row" : "detail"
+        guard currentArticleID != article.id || currentDetailToken != detailToken else {
             return
         }
 
         currentArticleID = article.id
+        currentDetailToken = detailToken
         state = .loading(url)
 
         do {
-            if let localReadable = ArticleReaderContentPolicy.localReadableArticle(for: article) {
+            if let localReadable = ArticleReaderContentPolicy.localReadableArticle(for: article, detail: detail) {
                 state = .loaded(localReadable)
                 return
             }
@@ -50,7 +54,7 @@ final class ArticlePreviewViewModel: ObservableObject {
             state = .loaded(readable)
         } catch {
             guard currentArticleID == article.id else { return }
-            if let fallback = fallbackArticle(from: article, url: url) {
+            if let fallback = fallbackArticle(from: article, detail: detail, url: url) {
                 state = .loaded(fallback)
             } else {
                 state = .failed((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)
@@ -60,11 +64,18 @@ final class ArticlePreviewViewModel: ObservableObject {
 
     func reset() {
         currentArticleID = nil
+        currentDetailToken = nil
         state = .idle
     }
 
-    private func fallbackArticle(from article: ArticleFeedDisplayItem, url: URL) -> ReadableArticle? {
-        guard let text = HTMLTextExtractor.text(fromHTML: article.contentText ?? article.excerpt), text.nilIfBlank != nil else {
+    private func fallbackArticle(
+        from article: ArticleFeedDisplayItem,
+        detail: ArticleDetailSnapshot?,
+        url: URL
+    ) -> ReadableArticle? {
+        guard let text = HTMLTextExtractor.text(
+            fromHTML: detail?.contentText ?? detail?.excerpt ?? article.previewText
+        ), text.nilIfBlank != nil else {
             return nil
         }
         return ReadableArticle(
@@ -95,6 +106,7 @@ struct ArticlePreviewPane: View {
     @Environment(\.readerFontChoice) private var readerFontChoice
     @Environment(\.readerFontSize) private var readerFontSize
     let article: ArticleFeedDisplayItem?
+    let detail: ArticleDetailSnapshot?
     @Binding var previewMode: PreviewMode
     @Binding var isCollapsed: Bool
     @StateObject private var viewModel = ArticlePreviewViewModel()
@@ -110,16 +122,20 @@ struct ArticlePreviewPane: View {
             content
         }
         .background(theme.readerBackground)
-        .task(id: article?.id) {
+        .task(id: previewTaskID) {
             if previewMode == .reader {
-                await viewModel.load(article: article)
+                await viewModel.load(article: article, detail: detail)
             }
         }
         .onChange(of: previewMode) {
             if previewMode == .reader {
-                Task { await viewModel.load(article: article) }
+                Task { await viewModel.load(article: article, detail: detail) }
             }
         }
+    }
+
+    private var previewTaskID: String {
+        "\(article?.id ?? "none")|\(detail == nil ? "row" : "detail")|\(previewMode.rawValue)"
     }
 
     private var toolbar: some View {

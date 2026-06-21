@@ -61,6 +61,11 @@ struct RootView: View {
 
         view = AnyView(view.onChange(of: expandedArticleID) {
             markExpandedReadOnOpenIfNeeded()
+            feedStore.loadDetailIfNeeded(articleID: expandedArticleID)
+        })
+
+        view = AnyView(view.onChange(of: previewArticleID) {
+            feedStore.loadDetailIfNeeded(articleID: previewArticleID)
         })
 
         view = AnyView(view.onChange(of: settingsItems.first?.refreshWhileOpenMinutes) {
@@ -88,7 +93,7 @@ struct RootView: View {
 
         view = AnyView(view.onChange(of: feedKindFilter) {
             expandedArticleID = nil
-            if feedKindFilter == .hackerNews, case .source = selection {
+            if feedKindFilter != .all, case .source = selection {
                 selection = .inbox
             }
             if selection.isArticleFeedSelection {
@@ -193,6 +198,7 @@ struct RootView: View {
         ZStack {
             ArticleFeedView(
                 displayItems: feedStore.renderItems,
+                detailsByID: feedStore.detailsByID,
                 counts: feedStore.counts,
                 sources: viewModel.sources,
                 pendingRefreshSummary: feedStore.pendingRefreshSummary,
@@ -210,6 +216,7 @@ struct RootView: View {
                 isActive: selection.isArticleFeedSelection,
                 hasLoadedInitialPage: feedStore.hasLoadedInitialPage,
                 previewArticle: previewArticle,
+                previewArticleDetail: previewArticleDetail,
                 previewArticleID: $previewArticleID,
                 previewMode: previewModeBinding,
                 isPreviewCollapsed: $isPreviewCollapsed,
@@ -318,6 +325,10 @@ struct RootView: View {
 
     private var previewArticle: ArticleFeedDisplayItem? {
         feedStore.item(id: previewArticleID)
+    }
+
+    private var previewArticleDetail: ArticleDetailSnapshot? {
+        feedStore.detail(id: previewArticleID)
     }
 
     private var actionArticle: ArticleFeedDisplayItem? {

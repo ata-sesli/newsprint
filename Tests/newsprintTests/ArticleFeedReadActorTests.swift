@@ -4,6 +4,40 @@ import Testing
 @testable import newsprintCore
 
 @MainActor
+@Test func feedReadActorFetchesOnlyActiveVariantPage() async throws {
+    let container = try feedReadActorTestContainer()
+    let context = container.mainContext
+    let sourceID = UUID(uuidString: "00000000-0000-0000-0000-000000000130")!
+    context.insert(Source(
+        id: sourceID,
+        title: "Swift Source",
+        url: URL(string: "https://example.com/feed.xml")!,
+        kind: .blog
+    ))
+    try insertFeedReadActorArticles(
+        [
+            makeFeedReadActorArticle(id: "low-new", sourceID: sourceID, score: 1, publishedAt: Date(timeIntervalSince1970: 300), fetchedAt: Date(timeIntervalSince1970: 300)),
+            makeFeedReadActorArticle(id: "high-old", sourceID: sourceID, score: 10, publishedAt: Date(timeIntervalSince1970: 100), fetchedAt: Date(timeIntervalSince1970: 100)),
+            makeFeedReadActorArticle(id: "mid", sourceID: sourceID, score: 5, publishedAt: Date(timeIntervalSince1970: 200), fetchedAt: Date(timeIntervalSince1970: 200))
+        ],
+        in: context
+    )
+
+    let actor = ArticleFeedReadActor(modelContainer: container)
+    let page = try await actor.fetchActiveVariant(query: ArticleFeedQuery(
+        filter: .inbox,
+        searchText: "",
+        offset: 0,
+        limit: 2,
+        sort: .hot
+    ))
+
+    #expect(page.items.map(\.id) == ["high-old", "mid"])
+    #expect(page.nextOffset == 2)
+    #expect(page.hasMore)
+}
+
+@MainActor
 @Test func feedReadActorReturnsSnapshotsInFeedSortOrder() async throws {
     let container = try feedReadActorTestContainer()
     let context = container.mainContext
@@ -79,6 +113,94 @@ import Testing
     #expect(bundle.newest.items.map(\.id) == ["low-new", "mid", "high-old"])
     #expect(bundle.hot.nextOffset == 3)
     #expect(bundle.newest.nextOffset == 3)
+}
+
+@MainActor
+@Test func feedReadActorBuildsFamilyVariantBundleForHotAndNewest() async throws {
+    let container = try feedReadActorTestContainer()
+    let context = container.mainContext
+    let hackerNewsSourceID = UUID(uuidString: "00000000-0000-0000-0000-000000000126")!
+    let blogSourceID = UUID(uuidString: "00000000-0000-0000-0000-000000000127")!
+    context.insert(Source(
+        id: hackerNewsSourceID,
+        title: "Hacker News",
+        url: URL(string: "https://hacker-news.firebaseio.com/v0/topstories.json")!,
+        kind: .hackerNews
+    ))
+    context.insert(Source(
+        id: blogSourceID,
+        title: "Blog",
+        url: URL(string: "https://example.com/feed.xml")!,
+        kind: .blog
+    ))
+    try insertFeedReadActorArticles(
+        [
+            makeFeedReadActorArticle(id: "hn-hot", sourceID: hackerNewsSourceID, score: 20, publishedAt: Date(timeIntervalSince1970: 100)),
+            makeFeedReadActorArticle(id: "hn-new", sourceID: hackerNewsSourceID, score: 1, publishedAt: Date(timeIntervalSince1970: 400)),
+            makeFeedReadActorArticle(id: "blog-hot", sourceID: blogSourceID, score: 30, publishedAt: Date(timeIntervalSince1970: 200)),
+            makeFeedReadActorArticle(id: "blog-new", sourceID: blogSourceID, score: 2, publishedAt: Date(timeIntervalSince1970: 500))
+        ],
+        in: context
+    )
+
+    let actor = ArticleFeedReadActor(modelContainer: container)
+    let bundle = try await actor.fetchVariantBundle(query: ArticleFeedQuery(
+        filter: .inbox,
+        searchText: "",
+        offset: 0,
+        limit: 10,
+        sort: .hot
+    ))
+
+    #expect(bundle.page(kindFilter: .all, sort: .hot).items.map(\.id) == ["blog-hot", "hn-hot", "blog-new", "hn-new"])
+    #expect(bundle.page(kindFilter: .all, sort: .newest).items.map(\.id) == ["blog-new", "hn-new", "blog-hot", "hn-hot"])
+    #expect(bundle.page(kindFilter: .hackerNews, sort: .hot).items.map(\.id) == ["hn-hot", "hn-new"])
+    #expect(bundle.page(kindFilter: .hackerNews, sort: .newest).items.map(\.id) == ["hn-new", "hn-hot"])
+    #expect(bundle.page(kindFilter: .nonHackerNews, sort: .hot).items.map(\.id) == ["blog-hot", "blog-new"])
+    #expect(bundle.page(kindFilter: .nonHackerNews, sort: .newest).items.map(\.id) == ["blog-new", "blog-hot"])
+}
+
+@MainActor
+@Test func feedReadActorBuildsStarredFamilyVariantBundleForHotAndNewest() async throws {
+    let container = try feedReadActorTestContainer()
+    let context = container.mainContext
+    let hackerNewsSourceID = UUID(uuidString: "00000000-0000-0000-0000-000000000128")!
+    let blogSourceID = UUID(uuidString: "00000000-0000-0000-0000-000000000129")!
+    context.insert(Source(
+        id: hackerNewsSourceID,
+        title: "Hacker News",
+        url: URL(string: "https://hacker-news.firebaseio.com/v0/topstories.json")!,
+        kind: .hackerNews
+    ))
+    context.insert(Source(
+        id: blogSourceID,
+        title: "Blog",
+        url: URL(string: "https://example.com/feed.xml")!,
+        kind: .blog
+    ))
+    try insertFeedReadActorArticles(
+        [
+            makeFeedReadActorArticle(id: "hn-star-hot", sourceID: hackerNewsSourceID, score: 20, publishedAt: Date(timeIntervalSince1970: 100), isStarred: true),
+            makeFeedReadActorArticle(id: "hn-unstarred", sourceID: hackerNewsSourceID, score: 50, publishedAt: Date(timeIntervalSince1970: 600)),
+            makeFeedReadActorArticle(id: "blog-star-new", sourceID: blogSourceID, score: 2, publishedAt: Date(timeIntervalSince1970: 500), isStarred: true),
+            makeFeedReadActorArticle(id: "blog-star-hot", sourceID: blogSourceID, score: 30, publishedAt: Date(timeIntervalSince1970: 200), isStarred: true)
+        ],
+        in: context
+    )
+
+    let actor = ArticleFeedReadActor(modelContainer: container)
+    let bundle = try await actor.fetchVariantBundle(query: ArticleFeedQuery(
+        filter: .inbox,
+        searchText: "",
+        offset: 0,
+        limit: 10,
+        sort: .hot
+    ))
+
+    #expect(bundle.starred.page(kindFilter: .all, sort: .hot).items.map(\.id) == ["blog-star-hot", "hn-star-hot", "blog-star-new"])
+    #expect(bundle.starred.page(kindFilter: .all, sort: .newest).items.map(\.id) == ["blog-star-new", "blog-star-hot", "hn-star-hot"])
+    #expect(bundle.starred.page(kindFilter: .hackerNews, sort: .hot).items.map(\.id) == ["hn-star-hot"])
+    #expect(bundle.starred.page(kindFilter: .nonHackerNews, sort: .newest).items.map(\.id) == ["blog-star-new", "blog-star-hot"])
 }
 
 @MainActor
@@ -188,10 +310,112 @@ import Testing
         sort: .hot,
         kindFilter: .all
     ))
+    let nonHackerNewsPage = try await actor.fetchPage(query: ArticleFeedQuery(
+        filter: .inbox,
+        searchText: "",
+        offset: 0,
+        limit: 10,
+        sort: .hot,
+        kindFilter: .nonHackerNews
+    ))
 
     #expect(hnHotPage.items.map(\.id) == ["hn-high", "hn-low"])
     #expect(hnUnreadPage.items.map(\.id) == ["hn-high"])
     #expect(allHotPage.items.map(\.id) == ["blog-high", "hn-high", "hn-low"])
+    #expect(nonHackerNewsPage.items.map(\.id) == ["blog-high"])
+}
+
+@MainActor
+@Test func feedCacheActorReturnsOnlyVisibleWindowRows() async throws {
+    let container = try feedReadActorTestContainer()
+    let context = container.mainContext
+    let sourceID = UUID(uuidString: "00000000-0000-0000-0000-000000000140")!
+    context.insert(Source(
+        id: sourceID,
+        title: "Blog",
+        url: URL(string: "https://example.com/feed.xml")!,
+        kind: .blog
+    ))
+
+    let articles = (0..<200).map { index in
+        makeFeedReadActorArticle(
+            id: String(format: "item-%03d", index),
+            sourceID: sourceID,
+            score: Double(200 - index),
+            publishedAt: Date(timeIntervalSince1970: TimeInterval(10_000 - index)),
+            fetchedAt: Date(timeIntervalSince1970: TimeInterval(10_000 - index))
+        )
+    }
+    try insertFeedReadActorArticles(articles, in: context)
+
+    let actor = ArticleFeedCacheActor(modelContainer: container)
+    let query = ArticleFeedQuery(
+        filter: .inbox,
+        searchText: "",
+        offset: 0,
+        limit: 150,
+        sort: .hot
+    )
+    let firstWindow = try await actor.loadActiveWindow(query: query, start: 0, limit: 150)
+    let shiftedWindow = try await actor.loadActiveWindow(query: query, start: 50, limit: 150)
+
+    #expect(firstWindow.rows.count == 150)
+    #expect(firstWindow.rows.first?.id == "item-000")
+    #expect(firstWindow.rows.last?.id == "item-149")
+    #expect(shiftedWindow.rows.count == 150)
+    #expect(shiftedWindow.rows.first?.id == "item-050")
+    #expect(shiftedWindow.rows.last?.id == "item-199")
+}
+
+@MainActor
+@Test func feedCacheActorKeepsFullArticleBodyInDetailSnapshot() async throws {
+    let container = try feedReadActorTestContainer()
+    let context = container.mainContext
+    let sourceID = UUID(uuidString: "00000000-0000-0000-0000-000000000141")!
+    context.insert(Source(
+        id: sourceID,
+        title: "Longform",
+        url: URL(string: "https://example.com/feed.xml")!,
+        kind: .blog
+    ))
+    let longText = Array(repeating: "This is a deliberately long paragraph for the full article body.", count: 40)
+        .joined(separator: " ")
+    let longHTML = "<article><p>\(longText)</p></article>"
+    context.insert(Article(
+        id: "long-body",
+        sourceID: sourceID,
+        sourceTitle: "Longform",
+        title: "Long Body",
+        url: URL(string: "https://example.com/long-body")!,
+        publishedAt: Date(timeIntervalSince1970: 500),
+        fetchedAt: Date(timeIntervalSince1970: 500),
+        excerpt: "Short excerpt",
+        contentHTML: longHTML,
+        contentText: longText,
+        score: 10
+    ))
+    try context.save()
+
+    let actor = ArticleFeedCacheActor(modelContainer: container)
+    let window = try await actor.loadActiveWindow(
+        query: ArticleFeedQuery(
+            filter: .inbox,
+            searchText: "",
+            offset: 0,
+            limit: 150,
+            sort: .hot
+        ),
+        start: 0,
+        limit: 150
+    )
+    let row = try #require(window.rows.first)
+    let detail = try #require(try await actor.detail(articleID: "long-body"))
+
+    #expect(row.id == "long-body")
+    #expect(row.previewText != longText)
+    #expect((row.previewText?.count ?? 0) <= 423)
+    #expect(detail.contentText == longText)
+    #expect(detail.contentHTML == longHTML)
 }
 
 @MainActor

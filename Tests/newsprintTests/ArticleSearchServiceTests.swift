@@ -127,6 +127,38 @@ import Testing
     #expect(results.map(\.id) == ["hn-unread"])
 }
 
+@Test func searchServiceComposesNonHackerNewsKindFilterWithArticleFilters() {
+    let hackerNewsSourceID = UUID()
+    let blogSourceID = UUID()
+    let blogUnread = makeSearchArticle(
+        id: "blog-unread",
+        sourceID: blogSourceID,
+        title: "Blog Unread",
+        isRead: false,
+        score: 20
+    )
+    let hackerNewsUnread = makeSearchArticle(
+        id: "hn-unread",
+        sourceID: hackerNewsSourceID,
+        title: "HN Unread",
+        isRead: false,
+        score: 30
+    )
+
+    let results = ArticleSearchService().filter(
+        articles: [hackerNewsUnread, blogUnread],
+        filter: .unread,
+        searchText: "",
+        kindFilter: .nonHackerNews,
+        sourceKindsByID: [
+            hackerNewsSourceID: .hackerNews,
+            blogSourceID: .blog
+        ]
+    )
+
+    #expect(results.map(\.id) == ["blog-unread"])
+}
+
 private func makeSearchArticle(
     id: String = UUID().uuidString,
     sourceID: UUID = UUID(),

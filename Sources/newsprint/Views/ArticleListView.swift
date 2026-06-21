@@ -8,6 +8,7 @@ struct ArticleFeedView: View {
     @Environment(\.readerFontSize) private var readerFontSize
     @Environment(\.articleListDensity) private var density
     let displayItems: [ArticleFeedDisplayItem]
+    let detailsByID: [String: ArticleDetailSnapshot]
     let counts: FeedCounts
     let sources: [Source]
     let pendingRefreshSummary: FeedRefreshSummary?
@@ -25,6 +26,7 @@ struct ArticleFeedView: View {
     let isActive: Bool
     let hasLoadedInitialPage: Bool
     let previewArticle: ArticleFeedDisplayItem?
+    let previewArticleDetail: ArticleDetailSnapshot?
     @Binding var previewArticleID: String?
     @Binding var previewMode: PreviewMode
     @Binding var isPreviewCollapsed: Bool
@@ -43,6 +45,7 @@ struct ArticleFeedView: View {
         } preview: {
             ArticlePreviewPane(
                 article: previewArticle,
+                detail: previewArticleDetail,
                 previewMode: $previewMode,
                 isCollapsed: $isPreviewCollapsed
             )
@@ -87,6 +90,7 @@ struct ArticleFeedView: View {
                 } else {
                     ArticleFeedCollectionView(
                         items: displayItems,
+                        detailsByID: detailsByID,
                         expandedArticleID: expandedArticleID,
                         appearance: ArticleFeedAppearance(
                             theme: theme,
@@ -403,7 +407,7 @@ struct ExpandedArticleContent: View {
         guard hackerNewsMetadata == nil else {
             return nil
         }
-        guard let bodyText = HTMLTextExtractor.text(fromHTML: article.contentText ?? article.excerpt)?.nilIfBlank else {
+        guard let bodyText = HTMLTextExtractor.text(fromHTML: article.previewText)?.nilIfBlank else {
             return nil
         }
         if let previewText = article.previewText?.nilIfBlank,
@@ -600,19 +604,16 @@ struct FeedControlHeader: View {
             sourcePicker
 
             Button {
-                if feedKindFilter == .hackerNews {
-                    feedKindFilter = .all
-                } else {
-                    if case .source = selection {
-                        selection = .inbox
-                    }
-                    feedKindFilter = .hackerNews
+                let nextFilter = nextKindFilter
+                if nextFilter != .all, case .source = selection {
+                    selection = .inbox
                 }
+                feedKindFilter = nextFilter
             } label: {
-                chipLabel("HN", systemImage: "text.bubble")
+                Label(kindFilterTitle, systemImage: kindFilterSystemImage)
             }
-            .buttonStyle(FilterChipButtonStyle(isSelected: feedKindFilter == .hackerNews))
-            .help(feedKindFilter == .hackerNews ? "Show all sources" : "Show Hacker News")
+            .buttonStyle(FilterChipButtonStyle(isSelected: feedKindFilter != .all))
+            .help(kindFilterHelpText)
 
             if let contextualFilter {
                 HStack(spacing: 6) {
@@ -736,6 +737,50 @@ struct FeedControlHeader: View {
             return "All Sources"
         }
         return source.title
+    }
+
+    private var nextKindFilter: ArticleFeedKindFilter {
+        switch feedKindFilter {
+        case .all:
+            .hackerNews
+        case .hackerNews:
+            .nonHackerNews
+        case .nonHackerNews:
+            .all
+        }
+    }
+
+    private var kindFilterTitle: String {
+        switch feedKindFilter {
+        case .all:
+            return "All"
+        case .hackerNews:
+            return "HN"
+        case .nonHackerNews:
+            return "Non-HN"
+        }
+    }
+
+    private var kindFilterSystemImage: String {
+        switch feedKindFilter {
+        case .all:
+            return "circle.grid.2x2"
+        case .hackerNews:
+            return "text.bubble"
+        case .nonHackerNews:
+            return "newspaper"
+        }
+    }
+
+    private var kindFilterHelpText: String {
+        switch feedKindFilter {
+        case .all:
+            return "Showing all articles. Click for Hacker News only."
+        case .hackerNews:
+            return "Showing Hacker News only. Click for non-Hacker News."
+        case .nonHackerNews:
+            return "Showing non-Hacker News only. Click for all articles."
+        }
     }
 }
 

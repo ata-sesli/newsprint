@@ -4,6 +4,7 @@ import newsprintCore
 
 struct ArticleFeedCollectionView: NSViewRepresentable {
     let items: [ArticleFeedDisplayItem]
+    let detailsByID: [String: ArticleDetailSnapshot]
     let expandedArticleID: String?
     let appearance: ArticleFeedAppearance
     let isActive: Bool
@@ -17,6 +18,7 @@ struct ArticleFeedCollectionView: NSViewRepresentable {
     func makeCoordinator() -> ArticleFeedCollectionCoordinator {
         ArticleFeedCollectionCoordinator(
             items: items,
+            detailsByID: detailsByID,
             expandedArticleID: expandedArticleID,
             appearance: appearance,
             isActive: isActive,
@@ -74,6 +76,7 @@ struct ArticleFeedCollectionView: NSViewRepresentable {
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
         context.coordinator.update(
             items: items,
+            detailsByID: detailsByID,
             expandedArticleID: expandedArticleID,
             appearance: appearance,
             isActive: isActive,
@@ -96,6 +99,7 @@ final class ArticleFeedCollectionCoordinator: NSObject, NSCollectionViewDataSour
     weak var collectionView: NSCollectionView?
     weak var layout: NSCollectionViewFlowLayout?
     private var items: [ArticleFeedDisplayItem]
+    private var detailsByID: [String: ArticleDetailSnapshot]
     private var expandedArticleID: String?
     private var appearance: ArticleFeedAppearance
     private var isActive: Bool
@@ -114,6 +118,7 @@ final class ArticleFeedCollectionCoordinator: NSObject, NSCollectionViewDataSour
 
     init(
         items: [ArticleFeedDisplayItem],
+        detailsByID: [String: ArticleDetailSnapshot],
         expandedArticleID: String?,
         appearance: ArticleFeedAppearance,
         isActive: Bool,
@@ -125,6 +130,7 @@ final class ArticleFeedCollectionCoordinator: NSObject, NSCollectionViewDataSour
         onArticleAction: @escaping (String, ArticleStateMutation) -> Void
     ) {
         self.items = items
+        self.detailsByID = detailsByID
         self.expandedArticleID = expandedArticleID
         self.appearance = appearance
         self.isActive = isActive
@@ -138,6 +144,7 @@ final class ArticleFeedCollectionCoordinator: NSObject, NSCollectionViewDataSour
 
     func update(
         items newItems: [ArticleFeedDisplayItem],
+        detailsByID newDetailsByID: [String: ArticleDetailSnapshot],
         expandedArticleID newExpandedArticleID: String?,
         appearance newAppearance: ArticleFeedAppearance,
         isActive newIsActive: Bool,
@@ -148,7 +155,9 @@ final class ArticleFeedCollectionCoordinator: NSObject, NSCollectionViewDataSour
         onNearEnd: @escaping (Int) -> Void,
         onArticleAction: @escaping (String, ArticleStateMutation) -> Void
     ) {
+        let oldItems = items
         let oldIDs = items.map(\.id)
+        let oldDetailKeys = items.map { detailKey(for: $0.id, in: detailsByID) }
         let oldStateKeys = items.map(stateKey)
         let oldExpandedID = expandedArticleID
         let oldAppearanceKey = appearance.key
@@ -156,10 +165,18 @@ final class ArticleFeedCollectionCoordinator: NSObject, NSCollectionViewDataSour
         let oldReloadGeneration = reloadGeneration
         let oldEdgeResetGeneration = edgeResetGeneration
         let newIDs = newItems.map(\.id)
+        let newDetailKeys = newItems.map { detailKey(for: $0.id, in: newDetailsByID) }
         let newStateKeys = newItems.map(stateKey)
         let newAppearanceKey = newAppearance.key
+        let visibleAnchorIDBeforeUpdate: String?
+        if let collectionView {
+            visibleAnchorIDBeforeUpdate = visibleAnchorID(in: collectionView, items: oldItems)
+        } else {
+            visibleAnchorIDBeforeUpdate = nil
+        }
 
         items = newItems
+        detailsByID = newDetailsByID
         expandedArticleID = newExpandedArticleID
         appearance = newAppearance
         isActive = newIsActive
@@ -176,6 +193,7 @@ final class ArticleFeedCollectionCoordinator: NSObject, NSCollectionViewDataSour
                 oldAppearanceKey != newAppearanceKey ||
                 oldExpandedID != newExpandedArticleID ||
                 oldIDs != newIDs ||
+                oldDetailKeys != newDetailKeys ||
                 oldStateKeys != newStateKeys {
                 needsReloadOnActivation = true
                 shouldScrollToTopOnActivation = shouldScrollToTopOnActivation || oldReloadGeneration != newReloadGeneration
@@ -211,6 +229,7 @@ final class ArticleFeedCollectionCoordinator: NSObject, NSCollectionViewDataSour
            oldAppearanceKey == newAppearanceKey,
            oldExpandedID == newExpandedArticleID,
            oldIDs == newIDs,
+           oldDetailKeys == newDetailKeys,
            oldStateKeys == newStateKeys {
             return
         }
@@ -218,7 +237,7 @@ final class ArticleFeedCollectionCoordinator: NSObject, NSCollectionViewDataSour
         if oldEdgeResetGeneration != newEdgeResetGeneration {
             edgeReporter.reset()
         }
-        let visibleAnchorID = visibleAnchorID(in: collectionView)
+        let visibleAnchorID = visibleAnchorIDBeforeUpdate
 
         if oldReloadGeneration != newReloadGeneration {
             heightCache.removeAll()
@@ -258,6 +277,12 @@ final class ArticleFeedCollectionCoordinator: NSObject, NSCollectionViewDataSour
             return
         }
 
+        if oldDetailKeys != newDetailKeys {
+            reloadChangedDetailItems(oldDetailKeys: oldDetailKeys, newDetailKeys: newDetailKeys, in: collectionView)
+            collectionView.collectionViewLayout?.invalidateLayout()
+            return
+        }
+
         reloadChangedVisibleItems(in: collectionView)
     }
 
@@ -284,6 +309,7 @@ final class ArticleFeedCollectionCoordinator: NSObject, NSCollectionViewDataSour
         let itemModel = items[indexPath.item]
         articleItem.configure(
             item: itemModel,
+            detail: detailsByID[itemModel.id],
             isExpanded: itemModel.id == expandedArticleID,
             isTextExpanded: textExpandedArticleIDs.contains(itemModel.id),
             appearance: appearance,
@@ -324,7 +350,12 @@ final class ArticleFeedCollectionCoordinator: NSObject, NSCollectionViewDataSour
             return NSSize(width: width, height: cached)
         }
 
-        let measured = measureHeight(for: item, width: width, isTextExpanded: isTextExpanded)
+        let measured = measureHeight(
+            for: item,
+            detail: detailsByID[item.id],
+            width: width,
+            isTextExpanded: isTextExpanded
+        )
         heightCache.setHeight(measured, for: key)
         return NSSize(width: width, height: measured)
     }
@@ -373,6 +404,7 @@ final class ArticleFeedCollectionCoordinator: NSObject, NSCollectionViewDataSour
 
     private func measureHeight(
         for item: ArticleFeedDisplayItem,
+        detail: ArticleDetailSnapshot?,
         width: CGFloat,
         isTextExpanded: Bool
     ) -> CGFloat {
@@ -387,6 +419,7 @@ final class ArticleFeedCollectionCoordinator: NSObject, NSCollectionViewDataSour
         cardView.widthAnchor.constraint(equalToConstant: width).isActive = true
         cardView.configure(
             item: item,
+            detail: detail,
             isExpanded: item.id == expandedArticleID,
             isTextExpanded: isTextExpanded,
             appearance: appearance,
@@ -459,15 +492,46 @@ final class ArticleFeedCollectionCoordinator: NSObject, NSCollectionViewDataSour
         }
     }
 
+    private func reloadChangedDetailItems(
+        oldDetailKeys: [String],
+        newDetailKeys: [String],
+        in collectionView: NSCollectionView
+    ) {
+        let visibleIndexPaths = collectionView.indexPathsForVisibleItems().filter { $0.item < items.count }
+        let changed = Set(visibleIndexPaths.filter { indexPath in
+            indexPath.item < oldDetailKeys.count &&
+                indexPath.item < newDetailKeys.count &&
+                oldDetailKeys[indexPath.item] != newDetailKeys[indexPath.item]
+        })
+        for indexPath in changed {
+            heightCache.removeHeights(articleID: items[indexPath.item].id)
+        }
+        if !changed.isEmpty {
+            collectionView.reloadItems(at: changed)
+        }
+    }
+
     private func stateKey(for item: ArticleFeedDisplayItem) -> String {
         "\(item.isRead)|\(item.isStarred)|\(item.isHidden)"
     }
 
+    private func detailKey(for articleID: String, in details: [String: ArticleDetailSnapshot]) -> String {
+        guard let detail = details[articleID] else { return "none" }
+        return "\(detail.contentHTML?.count ?? 0)|\(detail.contentText?.count ?? 0)|\(detail.excerpt?.count ?? 0)|\(detail.authorCommentText?.count ?? 0)"
+    }
+
     private func visibleAnchorID(in collectionView: NSCollectionView) -> String? {
+        visibleAnchorID(in: collectionView, items: items)
+    }
+
+    private func visibleAnchorID(
+        in collectionView: NSCollectionView,
+        items sourceItems: [ArticleFeedDisplayItem]
+    ) -> String? {
         collectionView.indexPathsForVisibleItems()
             .sorted { $0.item < $1.item }
             .compactMap { indexPath in
-                indexPath.item < items.count ? items[indexPath.item].id : nil
+                indexPath.item < sourceItems.count ? sourceItems[indexPath.item].id : nil
             }
             .first
     }
@@ -513,6 +577,7 @@ final class ArticleFeedCollectionItem: NSCollectionViewItem {
 
     func configure(
         item: ArticleFeedDisplayItem,
+        detail: ArticleDetailSnapshot?,
         isExpanded: Bool,
         isTextExpanded: Bool,
         appearance: ArticleFeedAppearance,
@@ -543,6 +608,7 @@ final class ArticleFeedCollectionItem: NSCollectionViewItem {
 
         cardView.configure(
             item: item,
+            detail: detail,
             isExpanded: isExpanded,
             isTextExpanded: isTextExpanded,
             appearance: appearance,
@@ -614,6 +680,7 @@ final class ArticleFeedCollapsedCardView: NSControl {
 
     func configure(
         item: ArticleFeedDisplayItem,
+        detail: ArticleDetailSnapshot?,
         isExpanded: Bool,
         isTextExpanded: Bool,
         appearance: ArticleFeedAppearance,
@@ -679,13 +746,17 @@ final class ArticleFeedCollapsedCardView: NSControl {
         titleLabel.stringValue = item.title
         titleLabel.font = cardFont(choice: appearance.readerFontChoice, size: titleFontSize, weight: item.isRead ? .medium : .semibold)
         titleLabel.textColor = item.isRead ? .secondaryLabelColor : .labelColor
-        titleLabel.maximumNumberOfLines = 3
+        titleLabel.maximumNumberOfLines = isExpanded ? 0 : 3
 
-        previewLabel.stringValue = item.previewText ?? ""
+        setArticleText(
+            item.previewText ?? "",
+            on: previewLabel,
+            font: cardFont(choice: appearance.readerFontChoice, size: CGFloat(appearance.readerFontSize), weight: .regular),
+            color: .secondaryLabelColor,
+            lineSpacing: 4
+        )
         previewLabel.isHidden = item.previewText == nil
-        previewLabel.font = cardFont(choice: appearance.readerFontChoice, size: CGFloat(appearance.readerFontSize), weight: .regular)
-        previewLabel.textColor = .secondaryLabelColor
-        previewLabel.maximumNumberOfLines = isExpanded ? 0 : density.previewLineLimit
+        previewLabel.maximumNumberOfLines = isExpanded ? 0 : min(density.previewLineLimit, 2)
 
         pointsBadge.configure(
             value: item.hackerNewsMetadata?.points,
@@ -707,6 +778,7 @@ final class ArticleFeedCollapsedCardView: NSControl {
 
         configureExpandedContent(
             item: item,
+            detail: detail,
             isExpanded: isExpanded,
             isTextExpanded: isTextExpanded,
             appearance: appearance
@@ -752,6 +824,12 @@ final class ArticleFeedCollapsedCardView: NSControl {
         previewLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         expandedBodyLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         authorCommentLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        metadataLabel.setContentCompressionResistancePriority(.required, for: .vertical)
+        titleLabel.setContentCompressionResistancePriority(.required, for: .vertical)
+        statsStack.setContentCompressionResistancePriority(.required, for: .vertical)
+        previewLabel.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
+        expandedBodyLabel.setContentCompressionResistancePriority(.defaultHigh, for: .vertical)
+        authorCommentLabel.setContentCompressionResistancePriority(.defaultHigh, for: .vertical)
 
         openButton.translatesAutoresizingMaskIntoConstraints = false
         bodyReadMoreButton.translatesAutoresizingMaskIntoConstraints = false
@@ -888,6 +966,7 @@ final class ArticleFeedCollapsedCardView: NSControl {
 
     private func configureExpandedContent(
         item: ArticleFeedDisplayItem,
+        detail: ArticleDetailSnapshot?,
         isExpanded: Bool,
         isTextExpanded: Bool,
         appearance: ArticleFeedAppearance
@@ -910,25 +989,37 @@ final class ArticleFeedCollapsedCardView: NSControl {
         expandedBodyLabel.maximumNumberOfLines = isTextExpanded ? 0 : 4
 
         if item.hackerNewsMetadata == nil,
-           let bodyText = HTMLTextExtractor.text(fromHTML: item.contentText ?? item.excerpt)?.articleFeedNilIfBlank {
+           let bodyText = HTMLTextExtractor.text(
+            fromHTML: detail?.contentText ?? detail?.excerpt ?? item.previewText
+           )?.articleFeedNilIfBlank {
             let bodyNormalized = bodyText.articleFeedNormalizedText
             let previewNormalized = item.previewText?.articleFeedNilIfBlank?.articleFeedNormalizedText
             if previewNormalized == nil || bodyNormalized != previewNormalized {
-                expandedBodyLabel.stringValue = bodyText
+                setArticleText(
+                    bodyText,
+                    on: expandedBodyLabel,
+                    font: bodyFont,
+                    color: .labelColor,
+                    lineSpacing: 6
+                )
                 expandedBodyLabel.isHidden = false
                 bodyReadMoreButton.isHidden = isTextExpanded || !bodyText.articleFeedProbablyNeedsReadMore
             }
         }
 
-        if let authorComment = item.hackerNewsAuthorCommentText {
+        if let authorComment = (detail?.authorCommentText ?? item.hackerNewsAuthorCommentText)?.articleFeedNilIfBlank {
             authorCommentView.isHidden = false
             authorCommentView.layer?.backgroundColor = nsColor(appearance.theme.rowAccent).withAlphaComponent(0.10).cgColor
             authorAccentView.layer?.backgroundColor = nsColor(appearance.theme.rowAccent).cgColor
             authorTitleLabel.stringValue = "Author Comment"
             authorTitleLabel.textColor = .labelColor
-            authorCommentLabel.stringValue = authorComment
-            authorCommentLabel.font = bodyFont
-            authorCommentLabel.textColor = .labelColor
+            setArticleText(
+                authorComment,
+                on: authorCommentLabel,
+                font: bodyFont,
+                color: .labelColor,
+                lineSpacing: 6
+            )
             authorCommentLabel.maximumNumberOfLines = isTextExpanded ? 0 : 4
             authorReadMoreButton.isHidden = isTextExpanded || !authorComment.articleFeedProbablyNeedsReadMore
         }
@@ -1089,6 +1180,28 @@ final class ArticleFeedCollapsedCardView: NSControl {
 
     private func nsColor(_ color: Color) -> NSColor {
         NSColor(color)
+    }
+
+    private func setArticleText(
+        _ text: String,
+        on label: NSTextField,
+        font: NSFont,
+        color: NSColor,
+        lineSpacing: CGFloat
+    ) {
+        let paragraphStyle = NSMutableParagraphStyle()
+        paragraphStyle.lineBreakMode = .byWordWrapping
+        paragraphStyle.lineSpacing = lineSpacing
+        label.font = font
+        label.textColor = color
+        label.attributedStringValue = NSAttributedString(
+            string: text,
+            attributes: [
+                .font: font,
+                .foregroundColor: color,
+                .paragraphStyle: paragraphStyle
+            ]
+        )
     }
 
     private func cardFont(choice: ReaderFontChoice, size: CGFloat, weight: NSFont.Weight) -> NSFont {

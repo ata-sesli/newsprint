@@ -7,8 +7,8 @@ final class ArticleFeedStore: ObservableObject {
     static let pageSize = 750
     static let loadMoreThreshold = 50
 
-    @Published private(set) var loadedItems: [ArticleFeedDisplayItem] = []
     @Published private(set) var renderItems: [ArticleFeedDisplayItem] = []
+    @Published private(set) var detailsByID: [String: ArticleDetailSnapshot] = [:]
     @Published private(set) var counts = FeedCounts()
     @Published private(set) var tagNames: [String] = []
     @Published private(set) var isLoading = false
@@ -20,37 +20,41 @@ final class ArticleFeedStore: ObservableObject {
     @Published private(set) var bulkReloadGeneration = 0
     @Published private(set) var edgeResetGeneration = 0
 
-    private var readActor: ArticleFeedReadActor?
+    private var cacheActor: ArticleFeedCacheActor?
     private var currentFilter: ArticleFilter = .inbox
     private var currentSearchText = ""
     private var currentSort: ArticleFeedSort = .hot
     private var currentKindFilter: ArticleFeedKindFilter = .all
     private var renderWindow = ArticleRenderWindow()
-    private var sortCache = ArticleFeedSortCache()
-    private var currentSortCacheKey: ArticleFeedSortCacheKey?
+    private var cachedRowCount = 0
+    private var rowsByID: [String: ArticleFeedDisplayItem] = [:]
     private var loadGeneration = 0
     private var hasLoadedPage = false
     private var loadTask: Task<Void, Never>?
-    private var prefetchTask: Task<Void, Never>?
+    private var windowTask: Task<Void, Never>?
     private var countsTask: Task<Void, Never>?
     private var tagTask: Task<Void, Never>?
     private var pendingPrepareTask: Task<Void, Never>?
+    private var warmupTask: Task<Void, Never>?
+    private var detailTasks: [String: Task<Void, Never>] = [:]
     private var pendingPreparedSummary: FeedRefreshSummary?
-    private var pendingPreparedInsertedItems: [ArticleFeedDisplayItem] = []
+    private var pendingPreparedWindow: ArticleFeedVariantWindow?
 
     deinit {
         loadTask?.cancel()
-        prefetchTask?.cancel()
+        windowTask?.cancel()
         countsTask?.cancel()
         tagTask?.cancel()
         pendingPrepareTask?.cancel()
+        warmupTask?.cancel()
+        detailTasks.values.forEach { $0.cancel() }
     }
 
     func configure(container: ModelContainer?) {
-        guard readActor == nil, let container else {
+        guard cacheActor == nil, let container else {
             return
         }
-        readActor = ArticleFeedReadActor(modelContainer: container)
+        cacheActor = ArticleFeedCacheActor(modelContainer: container)
     }
 
     func reloadIfNeeded(
@@ -61,19 +65,10 @@ final class ArticleFeedStore: ObservableObject {
     ) {
         let normalizedSearchText = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         if hasLoadedPage,
-           currentFilter == filter,
            currentSearchText == normalizedSearchText,
-           currentKindFilter == kindFilter,
-           currentSort != sort {
-            switchSort(sort)
-            return
-        }
-
-        guard !hasLoadedPage ||
-              currentFilter != filter ||
-              currentSearchText != normalizedSearchText ||
-              currentKindFilter != kindFilter else {
-            currentSort = sort
+           currentFilter == filter,
+           currentSort == sort,
+           currentKindFilter == kindFilter {
             return
         }
 
@@ -86,7 +81,7 @@ final class ArticleFeedStore: ObservableObject {
         sort: ArticleFeedSort? = nil,
         kindFilter: ArticleFeedKindFilter? = nil
     ) {
-        guard let readActor else {
+        guard let cacheActor else {
             return
         }
 
@@ -97,44 +92,39 @@ final class ArticleFeedStore: ObservableObject {
         currentSearchText = normalizedSearchText
         currentSort = selectedSort
         currentKindFilter = selectedKindFilter
+        renderWindow = ArticleRenderWindow()
+        cachedRowCount = 0
+        offset = 0
         loadGeneration += 1
         let generation = loadGeneration
         isLoading = true
-        prefetchTask?.cancel()
+        windowTask?.cancel()
         pendingPrepareTask?.cancel()
         pendingPreparedSummary = nil
-        pendingPreparedInsertedItems = []
-        if loadedItems.isEmpty {
+        pendingPreparedWindow = nil
+        if renderItems.isEmpty {
             hasLoadedInitialPage = false
         }
 
+        let query = activeQuery(start: 0, limit: ArticleRenderWindow.defaultSize)
         loadTask?.cancel()
         loadTask = Task { [weak self] in
             do {
-                let query = ArticleFeedQuery(
-                    filter: filter,
-                    searchText: normalizedSearchText,
-                    offset: 0,
-                    limit: Self.pageSize,
-                    sort: selectedSort,
-                    kindFilter: selectedKindFilter
+                async let window = cacheActor.loadActiveWindow(
+                    query: query,
+                    start: 0,
+                    limit: ArticleRenderWindow.defaultSize
                 )
-                async let sortBundle = readActor.fetchSortBundle(query: query)
-                async let counts = readActor.fetchCounts()
-                let result = try await (sortBundle, counts)
+                async let counts = cacheActor.fetchCounts()
+                let result = try await (window, counts)
                 guard !Task.isCancelled else { return }
                 await MainActor.run {
-                    self?.applyReload(
-                        bundle: result.0,
+                    self?.applyActiveWindow(
+                        result.0,
                         counts: result.1,
-                        key: ArticleFeedSortCacheKey(
-                            filter: filter,
-                            searchText: normalizedSearchText,
-                            kindFilter: selectedKindFilter,
-                            offset: 0,
-                            limit: Self.pageSize
-                        ),
-                        generation: generation
+                        generation: generation,
+                        resetScroll: true,
+                        startWarmup: true
                     )
                 }
             } catch {
@@ -147,23 +137,24 @@ final class ArticleFeedStore: ObservableObject {
     }
 
     func shiftRenderWindowIfNeeded(localIndex: Int) {
-        let globalIndex = renderWindow.globalIndex(forLocalIndex: localIndex)
-        let shiftedWindow = renderWindow.shiftedIfNeeded(localIndex: localIndex, totalCount: loadedItems.count)
-        if shiftedWindow != renderWindow {
-            renderWindow = shiftedWindow
-            publishRenderItems()
+        let totalCountForShift = hasMore
+            ? max(cachedRowCount + ArticleRenderWindow.defaultStride, renderWindow.end + ArticleRenderWindow.defaultStride)
+            : cachedRowCount
+        let shiftedWindow = renderWindow.shiftedIfNeeded(localIndex: localIndex, totalCount: totalCountForShift)
+        guard shiftedWindow != renderWindow else {
+            return
         }
-        loadMoreIfNeeded(currentIndex: globalIndex)
+        loadWindow(start: shiftedWindow.start, resetScroll: false)
     }
 
     func refreshCounts() {
-        guard let readActor else {
+        guard let cacheActor else {
             return
         }
         countsTask?.cancel()
         countsTask = Task { [weak self] in
             do {
-                let counts = try await readActor.fetchCounts()
+                let counts = try await cacheActor.fetchCounts()
                 guard !Task.isCancelled else { return }
                 await MainActor.run {
                     self?.counts = counts
@@ -173,14 +164,14 @@ final class ArticleFeedStore: ObservableObject {
     }
 
     func refreshTagNames() {
-        guard let readActor else {
+        guard let cacheActor else {
             return
         }
         tagTask?.cancel()
         tagTask = Task { [weak self] in
             do {
                 let timing = StartupTimingRecorder()
-                let tagNames = try await readActor.fetchTagNames()
+                let tagNames = try await cacheActor.fetchTagNames()
                 timing.markAndLog("Tag fetch")
                 guard !Task.isCancelled else { return }
                 await MainActor.run {
@@ -196,7 +187,21 @@ final class ArticleFeedStore: ObservableObject {
     }
 
     func reloadAfterBulkDataChange() {
-        reload(filter: currentFilter, searchText: currentSearchText)
+        guard let cacheActor else {
+            reload(filter: currentFilter, searchText: currentSearchText, sort: currentSort, kindFilter: currentKindFilter)
+            return
+        }
+        loadGeneration += 1
+        let filter = currentFilter
+        let searchText = currentSearchText
+        let sort = currentSort
+        let kindFilter = currentKindFilter
+        Task { [weak self] in
+            await cacheActor.invalidateAfterDataChange()
+            await MainActor.run {
+                self?.reload(filter: filter, searchText: searchText, sort: sort, kindFilter: kindFilter)
+            }
+        }
     }
 
     func beginPreparingFeed() {
@@ -209,15 +214,21 @@ final class ArticleFeedStore: ObservableObject {
 
     func prepareAfterRefresh(summary: FeedRefreshSummary) {
         pendingRefreshSummary = nil
-        if summary.retentionDeletedCount > 0 {
-            reloadAfterBulkDataChange()
-        } else {
-            mergeInsertedArticleIDs(summary.insertedArticleIDs)
+        guard summary.hasFeedChanges else {
+            refreshCounts()
+            isPreparingFeed = false
+            return
         }
+        reloadAfterBulkDataChange()
     }
 
     func prepareAfterSourceRefresh(summary: SourceRefreshSummary) {
-        mergeInsertedArticleIDs(summary.insertedArticleIDs)
+        guard summary.insertedCount > 0 else {
+            refreshCounts()
+            isPreparingFeed = false
+            return
+        }
+        reloadAfterBulkDataChange()
     }
 
     func storePendingRefresh(_ summary: FeedRefreshSummary) {
@@ -227,24 +238,29 @@ final class ArticleFeedStore: ObservableObject {
         pendingPrepareTask?.cancel()
         pendingRefreshSummary = nil
         pendingPreparedSummary = nil
-        pendingPreparedInsertedItems = []
+        pendingPreparedWindow = nil
 
         guard summary.retentionDeletedCount == 0,
               !summary.insertedArticleIDs.isEmpty,
-              currentSearchText.isEmpty,
-              let readActor else {
+              let cacheActor else {
             return
         }
 
         let generation = loadGeneration
+        let query = activeQuery(start: 0, limit: ArticleRenderWindow.defaultSize)
         pendingPrepareTask = Task { [weak self] in
             do {
-                let insertedItems = try await readActor.fetchSnapshots(ids: summary.insertedArticleIDs)
+                await cacheActor.invalidateAfterDataChange()
+                let window = try await cacheActor.loadActiveWindow(
+                    query: query,
+                    start: 0,
+                    limit: ArticleRenderWindow.defaultSize
+                )
                 guard !Task.isCancelled else { return }
                 await MainActor.run {
                     self?.storePreparedPendingRefresh(
                         summary,
-                        insertedItems: insertedItems,
+                        window: window,
                         generation: generation
                     )
                 }
@@ -262,7 +278,7 @@ final class ArticleFeedStore: ObservableObject {
         pendingPrepareTask?.cancel()
         pendingPrepareTask = nil
         pendingPreparedSummary = nil
-        pendingPreparedInsertedItems = []
+        pendingPreparedWindow = nil
     }
 
     func applyPendingRefresh() {
@@ -271,13 +287,19 @@ final class ArticleFeedStore: ObservableObject {
         }
         pendingRefreshSummary = nil
 
-        if pendingPreparedSummary == summary {
-            let insertedItems = pendingPreparedInsertedItems
+        if pendingPreparedSummary == summary, let window = pendingPreparedWindow {
             pendingPreparedSummary = nil
-            pendingPreparedInsertedItems = []
+            pendingPreparedWindow = nil
             pendingPrepareTask = nil
+            applyActiveWindow(
+                window,
+                counts: counts,
+                generation: loadGeneration,
+                resetScroll: true,
+                startWarmup: true
+            )
             refreshCounts()
-            applyInsertedItems(insertedItems, generation: loadGeneration)
+            isPreparingFeed = false
             return
         }
 
@@ -295,196 +317,151 @@ final class ArticleFeedStore: ObservableObject {
         guard let id else {
             return nil
         }
-        return loadedItems.first { $0.id == id }
+        return rowsByID[id] ?? renderItems.first { $0.id == id }
+    }
+
+    func detail(id: String?) -> ArticleDetailSnapshot? {
+        guard let id else {
+            return nil
+        }
+        return detailsByID[id]
+    }
+
+    func loadDetailIfNeeded(articleID: String?) {
+        guard let articleID,
+              detailsByID[articleID] == nil,
+              detailTasks[articleID] == nil,
+              let cacheActor else {
+            return
+        }
+
+        detailTasks[articleID] = Task { [weak self] in
+            do {
+                let detail = try await cacheActor.detail(articleID: articleID)
+                guard !Task.isCancelled else { return }
+                await MainActor.run {
+                    self?.detailTasks[articleID] = nil
+                    if let detail {
+                        self?.detailsByID[articleID] = detail
+                    }
+                }
+            } catch {
+                guard !Task.isCancelled else { return }
+                await MainActor.run {
+                    self?.detailTasks[articleID] = nil
+                }
+            }
+        }
     }
 
     func applyMutation(articleID: String, mutation: ArticleFeedSnapshotMutation) {
         updateItem(articleID: articleID) { $0.applying(mutation) }
+        if let cacheActor {
+            Task {
+                await cacheActor.invalidateAfterDataChange()
+            }
+        }
         refreshCounts()
         if let item = item(id: articleID), !matchesCurrentFeed(item) {
-            loadedItems.removeAll { $0.id == articleID }
-            publishRenderItems()
-            offset = loadedItems.count
+            rowsByID[articleID] = nil
+            renderItems.removeAll { $0.id == articleID }
+            cachedRowCount = max(0, cachedRowCount - 1)
+            edgeResetGeneration += 1
         }
     }
 
-    private func loadMoreIfNeeded(currentIndex: Int) {
-        guard let readActor,
-              hasMore,
-              !isLoading,
-              prefetchTask == nil,
-              currentIndex >= max(0, loadedItems.count - Self.loadMoreThreshold) else {
+    private func loadWindow(start: Int, resetScroll: Bool) {
+        guard let cacheActor else {
             return
         }
-
-        isLoading = true
         let generation = loadGeneration
-        let query = ArticleFeedQuery(
+        let normalizedStart = max(0, start)
+        let query = activeQuery(start: normalizedStart, limit: ArticleRenderWindow.defaultSize)
+        windowTask?.cancel()
+        windowTask = Task { [weak self] in
+            do {
+                let window = try await cacheActor.loadActiveWindow(
+                    query: query,
+                    start: normalizedStart,
+                    limit: ArticleRenderWindow.defaultSize
+                )
+                guard !Task.isCancelled else { return }
+                await MainActor.run {
+                    self?.applyWindow(window, generation: generation, resetScroll: resetScroll)
+                }
+            } catch {
+                guard !Task.isCancelled else { return }
+                await MainActor.run {
+                    self?.windowTask = nil
+                    self?.hasMore = false
+                }
+            }
+        }
+    }
+
+    private func activeQuery(start: Int, limit: Int) -> ArticleFeedQuery {
+        ArticleFeedQuery(
             filter: currentFilter,
             searchText: currentSearchText,
-            offset: offset,
-            limit: Self.pageSize,
+            offset: start,
+            limit: limit,
             sort: currentSort,
             kindFilter: currentKindFilter
         )
-
-        prefetchTask = Task { [weak self] in
-            do {
-                let bundle = try await readActor.fetchSortBundle(query: query)
-                guard !Task.isCancelled else { return }
-                await MainActor.run {
-                    self?.applyPrefetch(bundle: bundle, generation: generation)
-                }
-            } catch {
-                guard !Task.isCancelled else { return }
-                await MainActor.run {
-                    self?.applyPrefetchFailure(generation: generation)
-                }
-            }
-        }
     }
 
-    private func mergeInsertedArticleIDs(_ articleIDs: [String]) {
-        refreshCounts()
-        guard !articleIDs.isEmpty else {
-            isPreparingFeed = false
-            return
-        }
-
-        guard currentSearchText.isEmpty, let readActor else {
-            reloadAfterBulkDataChange()
-            return
-        }
-
-        let generation = loadGeneration
-        Task { [weak self] in
-            do {
-                let insertedItems = try await readActor.fetchSnapshots(ids: articleIDs)
-                guard !Task.isCancelled else { return }
-                await MainActor.run {
-                    self?.applyInsertedItems(insertedItems, generation: generation)
-                }
-            } catch {
-                guard !Task.isCancelled else { return }
-                await MainActor.run {
-                    self?.reloadAfterMergeFailure(generation: generation)
-                }
-            }
-        }
-    }
-
-    private func storePreparedPendingRefresh(
-        _ summary: FeedRefreshSummary,
-        insertedItems: [ArticleFeedDisplayItem],
-        generation: Int
-    ) {
-        pendingPrepareTask = nil
-        guard generation == loadGeneration else {
-            return
-        }
-        pendingPreparedSummary = summary
-        pendingPreparedInsertedItems = insertedItems
-        pendingRefreshSummary = summary
-    }
-
-    private func switchSort(_ sort: ArticleFeedSort) {
-        currentSort = sort
-        guard let key = currentSortCacheKey,
-              let bundle = sortCache.bundle(for: key) else {
-            rebuildMissingSortCache()
-            return
-        }
-        let page = bundle.page(for: sort)
-        loadedItems = page.items
-        offset = page.nextOffset
-        hasMore = page.hasMore
-        renderWindow = ArticleRenderWindow()
-        publishRenderItems()
-        bulkReloadGeneration += 1
-    }
-
-    private func rebuildMissingSortCache() {
-        guard let readActor else {
-            return
-        }
-        isPreparingFeed = true
-        let generation = loadGeneration
-        let key = ArticleFeedSortCacheKey(
-            filter: currentFilter,
-            searchText: currentSearchText,
-            kindFilter: currentKindFilter,
-            offset: 0,
-            limit: Self.pageSize
-        )
-        let query = ArticleFeedQuery(
-            filter: currentFilter,
-            searchText: currentSearchText,
-            offset: 0,
-            limit: Self.pageSize,
-            sort: currentSort,
-            kindFilter: currentKindFilter
-        )
-        Task { [weak self] in
-            do {
-                let bundle = try await readActor.fetchSortBundle(query: query)
-                guard !Task.isCancelled else { return }
-                await MainActor.run {
-                    self?.applySortCacheRebuild(bundle: bundle, key: key, generation: generation)
-                }
-            } catch {
-                await MainActor.run {
-                    self?.isPreparingFeed = false
-                }
-            }
-        }
-    }
-
-    private func applySortCacheRebuild(
-        bundle: ArticleFeedSortBundle,
-        key: ArticleFeedSortCacheKey,
-        generation: Int
-    ) {
-        guard generation == loadGeneration else {
-            return
-        }
-        sortCache.store(bundle, for: key)
-        currentSortCacheKey = key
-        switchSort(currentSort)
-        isPreparingFeed = false
-    }
-
-    private func applyReload(
-        bundle: ArticleFeedSortBundle,
+    private func applyActiveWindow(
+        _ window: ArticleFeedVariantWindow,
         counts: FeedCounts,
-        key: ArticleFeedSortCacheKey,
-        generation: Int
+        generation: Int,
+        resetScroll: Bool,
+        startWarmup: Bool
     ) {
         guard generation == loadGeneration else {
             return
         }
-        sortCache.store(bundle, for: key)
-        currentSortCacheKey = key
-        let page = bundle.page(for: currentSort)
-        loadedItems = page.items
-        renderWindow = ArticleRenderWindow()
-        publishRenderItems()
-        offset = page.nextOffset
-        hasMore = page.hasMore
+        applyWindow(window, generation: generation, resetScroll: resetScroll)
         self.counts = counts
         hasLoadedPage = true
         hasLoadedInitialPage = true
-        bulkReloadGeneration += 1
         isLoading = false
         isPreparingFeed = false
+        if startWarmup {
+            scheduleWarmup(activeKey: window.key, generation: generation)
+        }
+    }
+
+    private func applyWindow(
+        _ window: ArticleFeedVariantWindow,
+        generation: Int,
+        resetScroll: Bool
+    ) {
+        guard generation == loadGeneration else {
+            return
+        }
+        renderWindow = ArticleRenderWindow(start: window.start)
+        renderItems = window.rows
+        for row in window.rows {
+            rowsByID[row.id] = row
+        }
+        cachedRowCount = max(cachedRowCount, window.nextOffset)
+        offset = window.nextOffset
+        hasMore = window.hasMore
+        edgeResetGeneration += 1
+        if resetScroll {
+            bulkReloadGeneration += 1
+        }
+        windowTask = nil
     }
 
     private func applyReloadFailure(generation: Int) {
         guard generation == loadGeneration else {
             return
         }
-        loadedItems = []
+        renderItems = []
+        rowsByID.removeAll()
         renderWindow = ArticleRenderWindow()
-        publishRenderItems()
+        cachedRowCount = 0
         offset = 0
         hasMore = false
         hasLoadedPage = true
@@ -493,102 +470,95 @@ final class ArticleFeedStore: ObservableObject {
         isPreparingFeed = false
     }
 
-    private func applyPrefetch(bundle: ArticleFeedSortBundle, generation: Int) {
+    private func storePreparedPendingRefresh(
+        _ summary: FeedRefreshSummary,
+        window: ArticleFeedVariantWindow,
+        generation: Int
+    ) {
+        pendingPrepareTask = nil
         guard generation == loadGeneration else {
             return
         }
-        let page = bundle.page(for: currentSort)
-        loadedItems.append(contentsOf: page.items)
-        sortCache.append(bundle, currentKey: currentSortCacheKey)
-        offset = page.nextOffset
-        hasMore = page.hasMore
-        edgeResetGeneration += 1
-        publishRenderItems()
-        isLoading = false
-        prefetchTask = nil
+        pendingPreparedSummary = summary
+        pendingPreparedWindow = window
+        pendingRefreshSummary = summary
     }
 
-    private func applyPrefetchFailure(generation: Int) {
-        guard generation == loadGeneration else {
+    private func scheduleWarmup(activeKey: ArticleFeedVariantKey, generation: Int) {
+        guard let cacheActor else {
             return
         }
-        hasMore = false
-        isLoading = false
-        prefetchTask = nil
+        warmupTask?.cancel()
+        let warmupQueries = warmupQueries(activeKey: activeKey)
+        let activeIDs = Array(renderItems.prefix(50).map(\.id))
+        warmupTask = Task.detached(priority: .utility) {
+            await cacheActor.preloadDetails(articleIDs: activeIDs)
+            for query in warmupQueries {
+                guard !Task.isCancelled else { return }
+                _ = try? await cacheActor.loadActiveWindow(
+                    query: query,
+                    start: 0,
+                    limit: ArticleRenderWindow.defaultSize
+                )
+            }
+            guard !Task.isCancelled else { return }
+            await cacheActor.warmTail(activeKey, upTo: Self.pageSize)
+        }
     }
 
-    private func applyInsertedItems(_ insertedItems: [ArticleFeedDisplayItem], generation: Int) {
-        guard generation == loadGeneration else {
-            return
-        }
-        guard !insertedItems.isEmpty else {
-            isPreparingFeed = false
-            return
-        }
-
-        var itemsByID: [String: ArticleFeedDisplayItem] = [:]
-        for item in loadedItems {
-            itemsByID[item.id] = item
-        }
-        for item in insertedItems where matchesCurrentFeed(item) {
-            itemsByID[item.id] = item
-        }
-
-        let limit = max(Self.pageSize, offset, loadedItems.count)
-        var hotBuffer = TopCandidateBuffer<ArticleFeedDisplayItem>(
-            limit: limit,
-            areInPreferredOrder: { lhs, rhs in
-                Self.isPreferred(lhs, rhs, sort: .hot)
+    private func warmupQueries(activeKey: ArticleFeedVariantKey) -> [ArticleFeedQuery] {
+        var keys: [ArticleFeedVariantKey] = []
+        for filter in warmupFilters(for: currentFilter) {
+            for kind in ArticleFeedKindFilter.allCases {
+                for sort in ArticleFeedSort.allCases {
+                    let key = ArticleFeedVariantKey(
+                        filter: filter,
+                        searchText: currentSearchText,
+                        sort: sort,
+                        kindFilter: kind
+                    )
+                    if key != activeKey {
+                        keys.append(key)
+                    }
+                }
             }
-        )
-        var newestBuffer = TopCandidateBuffer<ArticleFeedDisplayItem>(
-            limit: limit,
-            areInPreferredOrder: { lhs, rhs in
-                Self.isPreferred(lhs, rhs, sort: .newest)
-            }
-        )
-        hotBuffer.insert(contentsOf: itemsByID.values)
-        newestBuffer.insert(contentsOf: itemsByID.values)
+        }
 
-        let bundle = ArticleFeedSortBundle(
-            hot: ArticleFeedPageSnapshot(
-                items: hotBuffer.items,
-                nextOffset: max(offset, hotBuffer.items.count),
-                hasMore: hasMore
-            ),
-            newest: ArticleFeedPageSnapshot(
-                items: newestBuffer.items,
-                nextOffset: max(offset, newestBuffer.items.count),
-                hasMore: hasMore
+        return keys.map { key in
+            ArticleFeedQuery(
+                filter: key.filter,
+                searchText: key.searchText,
+                offset: 0,
+                limit: ArticleRenderWindow.defaultSize,
+                sort: key.sort,
+                kindFilter: key.kindFilter
             )
-        )
-        sortCache.store(bundle, for: currentSortCacheKey)
-        let page = bundle.page(for: currentSort)
-        loadedItems = page.items
-        offset = max(offset, loadedItems.count)
-        publishRenderItems()
-        isPreparingFeed = false
+        }
     }
 
-    private func reloadAfterMergeFailure(generation: Int) {
-        guard generation == loadGeneration else {
-            return
+    private func warmupFilters(for filter: ArticleFilter) -> [ArticleFilter] {
+        if case .starred = filter {
+            return [.starred, .inbox]
         }
-        reloadAfterBulkDataChange()
+        switch filter {
+        case .inbox, .unread, .today, .hidden:
+            return [filter, .starred]
+        case .source, .tag:
+            return [filter]
+        case .starred:
+            return [.starred]
+        }
     }
 
     private func updateItem(articleID: String, update: (ArticleFeedDisplayItem) -> ArticleFeedDisplayItem) {
-        if let index = loadedItems.firstIndex(where: { $0.id == articleID }) {
-            loadedItems[index] = update(loadedItems[index])
+        if let item = rowsByID[articleID] {
+            rowsByID[articleID] = update(item)
         }
         if let index = renderItems.firstIndex(where: { $0.id == articleID }) {
-            renderItems[index] = update(renderItems[index])
+            let updated = update(renderItems[index])
+            renderItems[index] = updated
+            rowsByID[articleID] = updated
         }
-    }
-
-    private func publishRenderItems() {
-        let range = renderWindow.range(totalCount: loadedItems.count)
-        renderItems = Array(loadedItems[range])
     }
 
     private func matchesCurrentFeed(_ item: ArticleFeedDisplayItem) -> Bool {
@@ -604,8 +574,8 @@ final class ArticleFeedStore: ObservableObject {
             item.title,
             item.sourceTitle,
             item.author,
-            item.excerpt,
-            item.contentText,
+            item.previewText,
+            item.hackerNewsAuthorCommentPreview,
             item.url.absoluteString,
             item.tagNames.joined(separator: " ")
         ]
@@ -640,71 +610,8 @@ final class ArticleFeedStore: ObservableObject {
             return true
         case .hackerNews:
             return item.sourceKind == .hackerNews
+        case .nonHackerNews:
+            return item.sourceKind != .hackerNews
         }
-    }
-
-    private static func isPreferred(
-        _ lhs: ArticleFeedDisplayItem,
-        _ rhs: ArticleFeedDisplayItem,
-        sort: ArticleFeedSort
-    ) -> Bool {
-        switch sort {
-        case .hot:
-            if lhs.score != rhs.score {
-                return lhs.score > rhs.score
-            }
-            return isNewer(lhs, rhs)
-        case .newest:
-            return isNewer(lhs, rhs)
-        }
-    }
-
-    private static func isNewer(_ lhs: ArticleFeedDisplayItem, _ rhs: ArticleFeedDisplayItem) -> Bool {
-        let lhsPublished = lhs.publishedAt ?? .distantPast
-        let rhsPublished = rhs.publishedAt ?? .distantPast
-        if lhsPublished != rhsPublished {
-            return lhsPublished > rhsPublished
-        }
-        if lhs.fetchedAt != rhs.fetchedAt {
-            return lhs.fetchedAt > rhs.fetchedAt
-        }
-        return lhs.score > rhs.score
-    }
-}
-
-struct ArticleFeedSortCache {
-    private var bundles: [ArticleFeedSortCacheKey: ArticleFeedSortBundle] = [:]
-
-    func bundle(for key: ArticleFeedSortCacheKey) -> ArticleFeedSortBundle? {
-        bundles[key]
-    }
-
-    mutating func store(_ bundle: ArticleFeedSortBundle, for key: ArticleFeedSortCacheKey) {
-        bundles[key] = bundle
-    }
-
-    mutating func append(_ bundle: ArticleFeedSortBundle, currentKey: ArticleFeedSortCacheKey?) {
-        guard let currentKey, let existing = bundles[currentKey] else {
-            return
-        }
-        bundles[currentKey] = ArticleFeedSortBundle(
-            hot: ArticleFeedPageSnapshot(
-                items: existing.hot.items + bundle.hot.items,
-                nextOffset: bundle.hot.nextOffset,
-                hasMore: bundle.hot.hasMore
-            ),
-            newest: ArticleFeedPageSnapshot(
-                items: existing.newest.items + bundle.newest.items,
-                nextOffset: bundle.newest.nextOffset,
-                hasMore: bundle.newest.hasMore
-            )
-        )
-    }
-
-    mutating func store(_ bundle: ArticleFeedSortBundle, for key: ArticleFeedSortCacheKey?) {
-        guard let key else {
-            return
-        }
-        bundles[key] = bundle
     }
 }

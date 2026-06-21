@@ -107,7 +107,7 @@ The feed uses:
 - A pinned control header with clock, counts, search, sorting, and filter chips.
 - Hot/Newest sort modes.
 - Inbox, Unread, Today, Starred, Hidden filters.
-- Source, tag, and HN-family filters.
+- Source, tag, HN-only, and Non-HN filters.
 - Large expandable article cards.
 - One expanded card at a time.
 - Context menus and inline article actions.
@@ -198,7 +198,7 @@ Filters:
 - Today.
 - Starred.
 - Hidden.
-- HN family.
+- HN-only / Non-HN family.
 - Source.
 - Tag.
 
@@ -207,7 +207,7 @@ Sorting:
 - **Hot**: score, then published date, then fetched date.
 - **Newest**: published date, then fetched date, then score.
 
-`Hot` and `Newest` are global display orders. HN is a filter family, not a separate ranking mode.
+`Hot` and `Newest` are global display orders. HN and Non-HN are source-family filters, not separate ranking modes.
 
 ### Data Ownership
 
