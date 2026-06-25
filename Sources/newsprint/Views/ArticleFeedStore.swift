@@ -21,6 +21,7 @@ final class ArticleFeedStore: ObservableObject {
     @Published private(set) var edgeResetGeneration = 0
 
     private var cacheActor: ArticleFeedCacheActor?
+    private var modelContainer: ModelContainer?
     private var currentFilter: ArticleFilter = .inbox
     private var currentSearchText = ""
     private var currentSort: ArticleFeedSort = .hot
@@ -51,10 +52,13 @@ final class ArticleFeedStore: ObservableObject {
     }
 
     func configure(container: ModelContainer?) {
-        guard cacheActor == nil, let container else {
+        guard let container else {
             return
         }
-        cacheActor = ArticleFeedCacheActor(modelContainer: container)
+        modelContainer = container
+        if cacheActor == nil {
+            cacheActor = ArticleFeedCacheActor(modelContainer: container)
+        }
     }
 
     func reloadIfNeeded(
@@ -187,7 +191,7 @@ final class ArticleFeedStore: ObservableObject {
     }
 
     func reloadAfterBulkDataChange() {
-        guard let cacheActor else {
+        guard let cacheActor = replaceCacheActorAfterDataChange() else {
             reload(filter: currentFilter, searchText: currentSearchText, sort: currentSort, kindFilter: currentKindFilter)
             return
         }
@@ -242,7 +246,7 @@ final class ArticleFeedStore: ObservableObject {
 
         guard summary.retentionDeletedCount == 0,
               !summary.insertedArticleIDs.isEmpty,
-              let cacheActor else {
+              let cacheActor = replaceCacheActorAfterDataChange() else {
             return
         }
 
@@ -356,7 +360,7 @@ final class ArticleFeedStore: ObservableObject {
 
     func applyMutation(articleID: String, mutation: ArticleFeedSnapshotMutation) {
         updateItem(articleID: articleID) { $0.applying(mutation) }
-        if let cacheActor {
+        if let cacheActor = replaceCacheActorAfterDataChange() {
             Task {
                 await cacheActor.invalidateAfterDataChange()
             }
@@ -397,6 +401,21 @@ final class ArticleFeedStore: ObservableObject {
                 }
             }
         }
+    }
+
+    private func replaceCacheActorAfterDataChange() -> ArticleFeedCacheActor? {
+        guard let modelContainer else {
+            return cacheActor
+        }
+        warmupTask?.cancel()
+        windowTask?.cancel()
+        detailTasks.values.forEach { $0.cancel() }
+        detailTasks.removeAll()
+        detailsByID.removeAll()
+        rowsByID.removeAll()
+        let actor = ArticleFeedCacheActor(modelContainer: modelContainer)
+        cacheActor = actor
+        return actor
     }
 
     private func activeQuery(start: Int, limit: Int) -> ArticleFeedQuery {

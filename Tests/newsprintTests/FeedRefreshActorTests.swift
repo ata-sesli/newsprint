@@ -142,7 +142,7 @@ import Testing
 }
 
 @MainActor
-@Test func feedRefreshActorSkipsDeadSourcesAutomaticallyButExplicitRefreshCanRecover() async throws {
+@Test func feedRefreshActorRetriesDeadSourcesInRecoveryLane() async throws {
     let container = try refreshActorTestContainer()
     let context = container.mainContext
     let feedURL = URL(string: "https://example.com/dead-rss.xml")!
@@ -162,10 +162,37 @@ import Testing
         httpClient: FeedHTTPClient(session: mockFeedSession())
     )
 
-    let automaticSummary = await actor.refreshAll()
-    #expect(automaticSummary.deadSourceCount == 1)
-    #expect(automaticSummary.insertedCount == 0)
-    #expect(MockFeedURLProtocol.requestedURLs(matching: [feedURL]).isEmpty)
+    let summary = await actor.refreshAll()
+    let refreshedSource = try #require(try context.fetch(FetchDescriptor<Source>()).first)
+
+    #expect(summary.deadSourceCount == 1)
+    #expect(summary.fastInsertedCount == 0)
+    #expect(summary.recoveryInsertedCount == 2)
+    #expect(summary.recoveredSourceCount == 1)
+    #expect(refreshedSource.lastErrorMessage == nil)
+    #expect(refreshedSource.consecutiveFailureCount == 0)
+}
+
+@MainActor
+@Test func feedRefreshActorExplicitRefreshCanRecoverDeadSource() async throws {
+    let container = try refreshActorTestContainer()
+    let context = container.mainContext
+    let feedURL = URL(string: "https://example.com/dead-explicit-rss.xml")!
+    let source = Source(
+        title: "Dead RSS",
+        url: feedURL,
+        kind: .rss,
+        lastErrorMessage: "Repeated timeout",
+        consecutiveFailureCount: 3
+    )
+    context.insert(source)
+    try context.save()
+
+    MockFeedURLProtocol.register(.success(try fixtureData("rss", extension: "xml")), for: feedURL)
+    let actor = FeedRefreshActor(
+        modelContainer: container,
+        httpClient: FeedHTTPClient(session: mockFeedSession())
+    )
 
     let explicitSummary = await actor.refresh(sourceID: source.id)
     let refreshedSource = try #require(try context.fetch(FetchDescriptor<Source>()).first)

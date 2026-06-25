@@ -337,7 +337,7 @@ public actor FeedRefreshActor: ModelActor {
                 case .fast:
                     return snapshot.refreshHealth == .healthy
                 case .recovery:
-                    return snapshot.refreshHealth == .degraded
+                    return snapshot.refreshHealth == .degraded || snapshot.refreshHealth == .dead
                 }
             }
             let deadSourceCount = sourceSnapshots.filter { $0.refreshHealth == .dead }.count
