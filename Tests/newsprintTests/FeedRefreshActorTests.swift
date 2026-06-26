@@ -215,7 +215,7 @@ import Testing
     context.insert(source)
     try context.save()
 
-    MockFeedURLProtocol.register(.success("[101,102,103]".data(using: .utf8)!), for: URL(string: "https://hacker-news.firebaseio.com/v0/showstories.json")!)
+    MockFeedURLProtocol.register(.success(showNewHTML(ids: [101, 102, 103], nextPage: nil).data(using: .utf8)!), for: URL(string: "https://news.ycombinator.com/shownew")!)
     MockFeedURLProtocol.register(.success(hackerNewsItemJSON(id: 101, title: "Show HN: First", points: 12, comments: 2)), for: URL(string: "https://hacker-news.firebaseio.com/v0/item/101.json")!)
     MockFeedURLProtocol.register(.success(hackerNewsItemJSON(id: 102, title: "Show HN: Filtered", points: 2, comments: 4)), for: URL(string: "https://hacker-news.firebaseio.com/v0/item/102.json")!)
     MockFeedURLProtocol.register(.success(hackerNewsItemJSON(id: 103, title: "Show HN: Third", points: 20, comments: 5)), for: URL(string: "https://hacker-news.firebaseio.com/v0/item/103.json")!)
@@ -234,7 +234,7 @@ import Testing
     #expect(summary.failedCount == 0)
     #expect(articles.map(\.title) == ["Show HN: First", "Show HN: Third"])
     #expect(articles.map(\.score) == [14, 25])
-    #expect(refreshedSource.url.absoluteString == "https://hacker-news.firebaseio.com/v0/showstories.json?points=10&count=20")
+    #expect(refreshedSource.url.absoluteString == "https://news.ycombinator.com/shownew?points=10&count=20")
     #expect(refreshedSource.lastSuccessfulFetchAt != nil)
 }
 
@@ -243,17 +243,17 @@ import Testing
     let container = try refreshActorTestContainer()
     let context = container.mainContext
     let blogURL = URL(string: "https://example.com/priority-blog-rss.xml")!
-    let hackerNewsListURL = URL(string: "https://hacker-news.firebaseio.com/v0/showstories.json")!
+    let hackerNewsListURL = URL(string: "https://news.ycombinator.com/shownew")!
     context.insert(Source(title: "A Blog", url: blogURL, kind: .rss))
     context.insert(Source(
         title: "Z Hacker News Show",
-        url: URL(string: "https://hacker-news.firebaseio.com/v0/showstories.json?count=1")!,
+        url: URL(string: "https://news.ycombinator.com/shownew?count=1")!,
         kind: .hackerNews
     ))
     try context.save()
 
     MockFeedURLProtocol.register(.success(try fixtureData("rss", extension: "xml")), for: blogURL)
-    MockFeedURLProtocol.register(.success("[9101]".data(using: .utf8)!), for: hackerNewsListURL)
+    MockFeedURLProtocol.register(.success(showNewHTML(ids: [9_101], nextPage: nil).data(using: .utf8)!), for: hackerNewsListURL)
     MockFeedURLProtocol.register(.success(hackerNewsItemJSON(id: 9_101, title: "Show HN: Priority", points: 20, comments: 5)), for: URL(string: "https://hacker-news.firebaseio.com/v0/item/9101.json")!)
     let actor = FeedRefreshActor(
         modelContainer: container,

@@ -43,7 +43,7 @@ Newsprint supports:
 - JSON Feed.
 - Homepage/blog feed discovery.
 - YouTube channel feeds by channel ID or feed URL.
-- Hacker News feeds through a dedicated official Firebase API source builder.
+- Hacker News feeds through a dedicated source builder using HN page discovery where needed and official Firebase item metadata.
 - Preset technical sources from the local catalog.
 - OPML import and export.
 
@@ -67,7 +67,7 @@ The Sources screen uses one unified table for presets and added sources:
 
 ### Hacker News
 
-Hacker News is handled as a first-class source type through the official Hacker News Firebase API.
+Hacker News is handled as a first-class source type. Front Page, Newest, Best, Ask HN, and Jobs use official Firebase list endpoints. Show HN uses `news.ycombinator.com/shownew` for newest-order discovery, then fetches each item from the official Firebase item endpoint for structured metadata.
 
 The HN source builder can create feeds for:
 
@@ -84,7 +84,7 @@ It also supports tuning:
 - Minimum comments.
 - Item count.
 
-Existing legacy HNRSS source URLs can be interpreted as configuration, but refreshes use the official Firebase API instead of HNRSS.
+Existing legacy HNRSS and Firebase Show HN source URLs can be interpreted as configuration, but refreshes do not use HNRSS.
 
 HN articles get special treatment in the feed:
 
@@ -395,10 +395,12 @@ ArticleFeedStore
 ArticleFeedCollectionView
 ```
 
-Hacker News sources use the HN API path:
+Hacker News sources use a hybrid HN path:
 
 ```text
 Hacker News Source
+  ↓
+shownew page discovery for Show HN, Firebase lists for other HN feeds
   ↓
 HackerNewsAPIClient
   ↓
@@ -613,7 +615,7 @@ The test suite covers:
 - Article ID generation.
 - HTML text extraction.
 - HN metadata parsing.
-- Hacker News Firebase API URL building and legacy HNRSS source parsing.
+- Hacker News URL building, Show HN `shownew` discovery, Firebase item mapping, and legacy HNRSS source parsing.
 - Hacker News API mapping and refresh behavior.
 - Source health and staged refresh behavior.
 - Rule engine behavior.

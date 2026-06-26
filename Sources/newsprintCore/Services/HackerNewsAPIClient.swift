@@ -31,10 +31,13 @@ public enum HackerNewsAPIError: Error, LocalizedError {
 public struct HackerNewsAPIClient: Sendable {
     private static let itemRequestConcurrency = 10
     private static let itemRequestTimeout: TimeInterval = 4
+    private static let showNewPageLimit = 3
     private let httpClient: FeedHTTPClient
+    private let pageClient: HackerNewsPageClient
 
     public init(httpClient: FeedHTTPClient = FeedHTTPClient()) {
         self.httpClient = httpClient
+        self.pageClient = HackerNewsPageClient(httpClient: httpClient)
     }
 
     public func fetchDrafts(
@@ -46,6 +49,15 @@ public struct HackerNewsAPIClient: Sendable {
         }
 
         let totalStartedAt = Date()
+        if configuration.kind == .show {
+            return try await fetchShowNewDrafts(
+                configuration: configuration,
+                source: source,
+                timeout: timeout,
+                startedAt: totalStartedAt
+            )
+        }
+
         let itemIDs = try await fetchItemIDs(for: configuration, timeout: timeout)
         let wantedCount = HackerNewsFeedURLBuilder.effectiveCount(for: configuration)
         var drafts: [ArticleDraft] = []
@@ -90,6 +102,71 @@ public struct HackerNewsAPIClient: Sendable {
         return drafts
     }
 
+    private func fetchShowNewDrafts(
+        configuration: HackerNewsFeedConfiguration,
+        source: SourceSnapshot,
+        timeout: TimeInterval,
+        startedAt totalStartedAt: Date
+    ) async throws -> [ArticleDraft] {
+        let wantedCount = HackerNewsFeedURLBuilder.effectiveCount(for: configuration)
+        var drafts: [ArticleDraft] = []
+        var page = 1
+        var fetchedPages = 0
+        var fetchedItems = 0
+        var skippedItems = 0
+        let itemsStartedAt = Date()
+
+        while drafts.count < wantedCount && page <= Self.showNewPageLimit {
+            let hnPage = try await pageClient.fetchShowNewPage(page: page, timeout: timeout)
+            fetchedPages += 1
+            let pageItems = hnPage.items
+            var nextIndex = 0
+
+            while drafts.count < wantedCount && nextIndex < pageItems.count {
+                let remainingAcceptedCapacity = wantedCount - drafts.count
+                let remainingPageCount = pageItems.count - nextIndex
+                let chunkCount = min(Self.itemRequestConcurrency, remainingAcceptedCapacity, remainingPageCount)
+                let chunk = Array(pageItems[nextIndex..<(nextIndex + chunkCount)])
+                nextIndex += chunkCount
+
+                let items = await BoundedTaskGroup.map(chunk, limit: chunkCount) { pageItem in
+                    try? await fetchItem(id: pageItem.id, timeout: Self.itemRequestTimeout)
+                }
+                fetchedItems += chunk.count
+
+                for (pageItem, item) in zip(chunk, items) {
+                    guard drafts.count < wantedCount else {
+                        break
+                    }
+
+                    guard let item else {
+                        skippedItems += 1
+                        continue
+                    }
+
+                    guard include(item, pageItem: pageItem, configuration: configuration),
+                          let draft = HackerNewsArticleMapper.draft(from: item, pageItem: pageItem, source: source) else {
+                        skippedItems += 1
+                        continue
+                    }
+                    drafts.append(draft)
+                }
+            }
+
+            guard drafts.count < wantedCount,
+                  let nextPage = hnPage.nextPage,
+                  nextPage > page else {
+                break
+            }
+            page = nextPage
+        }
+
+        NewsprintLog.network.info(
+            "HN shownew fetch \(source.title, privacy: .public): pages=\(fetchedPages), itemRequests=\(fetchedItems), skipped=\(skippedItems), drafts=\(drafts.count), itemLoop=\(elapsedMilliseconds(since: itemsStartedAt), format: .fixed(precision: 1))ms, total=\(elapsedMilliseconds(since: totalStartedAt), format: .fixed(precision: 1))ms"
+        )
+        return drafts
+    }
+
     private func fetchItemIDs(for configuration: HackerNewsFeedConfiguration, timeout: TimeInterval) async throws -> [Int] {
         let startedAt = Date()
         let response = try await httpClient.fetch(
@@ -118,12 +195,16 @@ public struct HackerNewsAPIClient: Sendable {
     }
 
     private func include(_ item: HackerNewsItem, configuration: HackerNewsFeedConfiguration) -> Bool {
+        include(item, pageItem: nil, configuration: configuration)
+    }
+
+    private func include(_ item: HackerNewsItem, pageItem: HackerNewsPageItem?, configuration: HackerNewsFeedConfiguration) -> Bool {
         if let minimumPoints = configuration.minimumPoints,
-           (item.score ?? 0) < minimumPoints {
+           (item.score ?? pageItem?.points ?? 0) < minimumPoints {
             return false
         }
         if let minimumComments = configuration.minimumComments,
-           (item.descendants ?? 0) < minimumComments {
+           (item.descendants ?? pageItem?.commentCount ?? 0) < minimumComments {
             return false
         }
         return true
@@ -144,18 +225,22 @@ public struct HackerNewsAPIClient: Sendable {
 
 public enum HackerNewsArticleMapper {
     public static func draft(from item: HackerNewsItem, source: SourceSnapshot) -> ArticleDraft? {
-        guard let title = item.title?.trimmedOptional else {
+        draft(from: item, pageItem: nil, source: source)
+    }
+
+    public static func draft(from item: HackerNewsItem, pageItem: HackerNewsPageItem?, source: SourceSnapshot) -> ArticleDraft? {
+        guard let title = item.title?.trimmedOptional ?? pageItem?.title.trimmedOptional else {
             return nil
         }
 
         let threadURL = URL(string: "https://news.ycombinator.com/item?id=\(item.id)")!
-        let articleURL = item.url ?? threadURL
+        let articleURL = item.url ?? pageItem?.url ?? threadURL
         let authorText = HTMLTextExtractor.text(fromHTML: item.text)?.trimmedOptional
         let metadata = metadataText(
             articleURL: articleURL,
             threadURL: threadURL,
-            points: item.score ?? 0,
-            comments: item.descendants ?? 0,
+            points: item.score ?? pageItem?.points ?? 0,
+            comments: item.descendants ?? pageItem?.commentCount ?? 0,
             authorText: authorText
         )
 
@@ -164,8 +249,8 @@ public enum HackerNewsArticleMapper {
             sourceTitle: source.title,
             title: title,
             url: articleURL,
-            author: item.by?.trimmedOptional,
-            publishedAt: item.time.map { Date(timeIntervalSince1970: $0) },
+            author: item.by?.trimmedOptional ?? pageItem?.author?.trimmedOptional,
+            publishedAt: item.time.map { Date(timeIntervalSince1970: $0) } ?? pageItem?.postedAt,
             updatedAt: nil,
             excerpt: authorText,
             contentHTML: item.text,

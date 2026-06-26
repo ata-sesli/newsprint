@@ -73,6 +73,6 @@ import Testing
 
     #expect(inserted)
     #expect(sources.map(\.title) == ["Hacker News Show, 50+ points"])
-    #expect(sources.map(\.url.absoluteString) == ["https://hacker-news.firebaseio.com/v0/showstories.json?points=50"])
+    #expect(sources.map(\.url.absoluteString) == ["https://news.ycombinator.com/shownew?points=50"])
     #expect(sources.map(\.kind) == [.hackerNews])
 }

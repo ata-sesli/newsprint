@@ -123,8 +123,13 @@ public enum HackerNewsFeedURLBuilder {
     public static func url(for configuration: HackerNewsFeedConfiguration) -> URL {
         var components = URLComponents()
         components.scheme = "https"
-        components.host = "hacker-news.firebaseio.com"
-        components.path = "/v0/\(configuration.kind.firebasePathComponent).json"
+        if configuration.kind == .show {
+            components.host = "news.ycombinator.com"
+            components.path = "/shownew"
+        } else {
+            components.host = "hacker-news.firebaseio.com"
+            components.path = "/v0/\(configuration.kind.firebasePathComponent).json"
+        }
 
         var queryItems: [URLQueryItem] = []
         if let minimumPoints = configuration.minimumPoints, minimumPoints > 0 {
@@ -161,6 +166,9 @@ public enum HackerNewsFeedURLBuilder {
         let kind: HackerNewsFeedKind?
         if host == "hacker-news.firebaseio.com" {
             kind = HackerNewsFeedKind.fromFirebasePath(components.path)
+        } else if host == "news.ycombinator.com",
+                  components.path.trimmingCharacters(in: CharacterSet(charactersIn: "/")).lowercased() == "shownew" {
+            kind = .show
         } else if host == "hnrss.org" {
             kind = HackerNewsFeedKind.fromLegacyHNRSSPath(components.path)
         } else {

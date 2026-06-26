@@ -2,14 +2,17 @@ import Foundation
 import Testing
 @testable import newsprintCore
 
+@Suite(.serialized)
+struct HackerNewsAPIClientTests {
 @Test func hackerNewsAPIPreservesOrderAndAppliesLocalFilters() async throws {
+    MockHackerNewsURLProtocol.reset()
     let source = SourceSnapshot(
         id: UUID(uuidString: "00000000-0000-0000-0000-00000000feed")!,
         title: "Hacker News Show",
-        url: try #require(URL(string: "https://hacker-news.firebaseio.com/v0/showstories.json?points=10&comments=2&count=2")),
+        url: try #require(URL(string: "https://news.ycombinator.com/shownew?points=10&comments=2&count=2")),
         kind: .hackerNews
     )
-    MockHackerNewsURLProtocol.register("[101,102,103]".data(using: .utf8)!, for: "https://hacker-news.firebaseio.com/v0/showstories.json")
+    MockHackerNewsURLProtocol.register(showNewHTML(ids: [101, 102, 103], nextPage: nil).data(using: .utf8)!, for: "https://news.ycombinator.com/shownew")
     MockHackerNewsURLProtocol.register(itemJSON(id: 101, title: "First", points: 12, comments: 2), for: "https://hacker-news.firebaseio.com/v0/item/101.json")
     MockHackerNewsURLProtocol.register(itemJSON(id: 102, title: "Filtered", points: 2, comments: 10), for: "https://hacker-news.firebaseio.com/v0/item/102.json")
     MockHackerNewsURLProtocol.register(itemJSON(id: 103, title: "Third", points: 20, comments: 5), for: "https://hacker-news.firebaseio.com/v0/item/103.json")
@@ -20,7 +23,77 @@ import Testing
     #expect(drafts.map(\.title) == ["First", "Third"])
 }
 
+@Test func hackerNewsAPIShowFetchesAdditionalPagesWhenNeededAfterFilters() async throws {
+    MockHackerNewsURLProtocol.reset()
+    let source = SourceSnapshot(
+        id: UUID(uuidString: "00000000-0000-0000-0000-00000000feed")!,
+        title: "Hacker News Show",
+        url: try #require(URL(string: "https://news.ycombinator.com/shownew?points=10&count=20")),
+        kind: .hackerNews
+    )
+    MockHackerNewsURLProtocol.register(showNewHTML(ids: [101, 102], nextPage: 2).data(using: .utf8)!, for: "https://news.ycombinator.com/shownew")
+    MockHackerNewsURLProtocol.register(showNewHTML(ids: [103, 104], nextPage: nil).data(using: .utf8)!, for: "https://news.ycombinator.com/shownew?p=2")
+    MockHackerNewsURLProtocol.register(itemJSON(id: 101, title: "Filtered One", points: 2, comments: 2), for: "https://hacker-news.firebaseio.com/v0/item/101.json")
+    MockHackerNewsURLProtocol.register(itemJSON(id: 102, title: "Accepted Two", points: 12, comments: 2), for: "https://hacker-news.firebaseio.com/v0/item/102.json")
+    MockHackerNewsURLProtocol.register(itemJSON(id: 103, title: "Accepted Three", points: 20, comments: 5), for: "https://hacker-news.firebaseio.com/v0/item/103.json")
+    MockHackerNewsURLProtocol.register(itemJSON(id: 104, title: "Unused Four", points: 30, comments: 5), for: "https://hacker-news.firebaseio.com/v0/item/104.json")
+    let client = HackerNewsAPIClient(httpClient: FeedHTTPClient(session: mockHackerNewsSession()))
+
+    let drafts = try await client.fetchDrafts(for: source)
+    let requestedIDs = MockHackerNewsURLProtocol.requestedItemIDs([101, 102, 103, 104])
+
+    #expect(drafts.map(\.title) == ["Accepted Two", "Accepted Three", "Unused Four"])
+    #expect(Set(requestedIDs) == Set([101, 102, 103, 104]))
+    #expect(MockHackerNewsURLProtocol.requestedPageURLs().contains(URL(string: "https://news.ycombinator.com/shownew?p=2")!))
+}
+
+@Test func hackerNewsAPIShowStopsFetchingAfterAcceptedCount() async throws {
+    MockHackerNewsURLProtocol.reset()
+    let source = SourceSnapshot(
+        id: UUID(uuidString: "00000000-0000-0000-0000-00000000feed")!,
+        title: "Hacker News Show",
+        url: try #require(URL(string: "https://news.ycombinator.com/shownew?count=20")),
+        kind: .hackerNews
+    )
+    let ids = Array(201...225)
+    MockHackerNewsURLProtocol.register(showNewHTML(ids: ids, nextPage: 2).data(using: .utf8)!, for: "https://news.ycombinator.com/shownew")
+    MockHackerNewsURLProtocol.register(showNewHTML(ids: [301], nextPage: nil).data(using: .utf8)!, for: "https://news.ycombinator.com/shownew?p=2")
+    for id in ids {
+        MockHackerNewsURLProtocol.register(itemJSON(id: id, title: "Item \(id)", points: 10, comments: 1), for: "https://hacker-news.firebaseio.com/v0/item/\(id).json")
+    }
+    let client = HackerNewsAPIClient(httpClient: FeedHTTPClient(session: mockHackerNewsSession()))
+
+    let drafts = try await client.fetchDrafts(for: source)
+    let requestedIDs = MockHackerNewsURLProtocol.requestedItemIDs(ids)
+
+    #expect(drafts.map(\.title) == ids.prefix(20).map { "Item \($0)" })
+    #expect(Set(requestedIDs) == Set(ids.prefix(20)))
+    #expect(!requestedIDs.contains(221))
+    #expect(!MockHackerNewsURLProtocol.requestedPageURLs().contains(URL(string: "https://news.ycombinator.com/shownew?p=2")!))
+}
+
+@Test func hackerNewsAPIShowSkipsFailedItemDetailRequests() async throws {
+    MockHackerNewsURLProtocol.reset()
+    let source = SourceSnapshot(
+        id: UUID(uuidString: "00000000-0000-0000-0000-00000000feed")!,
+        title: "Hacker News Show",
+        url: try #require(URL(string: "https://news.ycombinator.com/shownew?count=20")),
+        kind: .hackerNews
+    )
+    MockHackerNewsURLProtocol.register(showNewHTML(ids: [401, 402, 403], nextPage: nil).data(using: .utf8)!, for: "https://news.ycombinator.com/shownew")
+    MockHackerNewsURLProtocol.register(itemJSON(id: 401, title: "First Survives", points: 10, comments: 1), for: "https://hacker-news.firebaseio.com/v0/item/401.json")
+    MockHackerNewsURLProtocol.register(itemJSON(id: 403, title: "Third Survives", points: 12, comments: 2), for: "https://hacker-news.firebaseio.com/v0/item/403.json")
+    let client = HackerNewsAPIClient(httpClient: FeedHTTPClient(session: mockHackerNewsSession()))
+
+    let drafts = try await client.fetchDrafts(for: source)
+    let requestedIDs = MockHackerNewsURLProtocol.requestedItemIDs([401, 402, 403])
+
+    #expect(drafts.map(\.title) == ["First Survives", "Third Survives"])
+    #expect(Set(requestedIDs) == Set([401, 402, 403]))
+}
+
 @Test func hackerNewsAPIFetchesItemsConcurrentlyWhilePreservingOrder() async throws {
+    MockHackerNewsURLProtocol.reset()
     let source = SourceSnapshot(
         id: UUID(uuidString: "00000000-0000-0000-0000-00000000feed")!,
         title: "Hacker News Best",
@@ -42,6 +115,7 @@ import Testing
 }
 
 @Test func hackerNewsAPIStopsFetchingAfterAcceptedCount() async throws {
+    MockHackerNewsURLProtocol.reset()
     let source = SourceSnapshot(
         id: UUID(uuidString: "00000000-0000-0000-0000-00000000feed")!,
         title: "Hacker News Jobs",
@@ -64,6 +138,7 @@ import Testing
 }
 
 @Test func hackerNewsAPIUsesFourSecondItemTimeoutDuringRecoveryRefresh() async throws {
+    MockHackerNewsURLProtocol.reset()
     let source = SourceSnapshot(
         id: UUID(uuidString: "00000000-0000-0000-0000-00000000feed")!,
         title: "Hacker News Newest",
@@ -82,10 +157,11 @@ import Testing
 }
 
 @Test func hackerNewsArticleMapperUsesSubmittedURLAndMetadata() throws {
+    MockHackerNewsURLProtocol.reset()
     let source = SourceSnapshot(
         id: UUID(uuidString: "00000000-0000-0000-0000-00000000feed")!,
         title: "Hacker News Show",
-        url: try #require(URL(string: "https://hacker-news.firebaseio.com/v0/showstories.json")),
+        url: try #require(URL(string: "https://news.ycombinator.com/shownew")),
         kind: .hackerNews
     )
     let item = HackerNewsItem(
@@ -116,10 +192,11 @@ import Testing
 }
 
 @Test func hackerNewsArticleMapperUsesThreadURLForSelfPosts() throws {
+    MockHackerNewsURLProtocol.reset()
     let source = SourceSnapshot(
         id: UUID(),
         title: "Hacker News Show",
-        url: try #require(URL(string: "https://hacker-news.firebaseio.com/v0/showstories.json")),
+        url: try #require(URL(string: "https://news.ycombinator.com/shownew")),
         kind: .hackerNews
     )
     let item = HackerNewsItem(
@@ -139,6 +216,7 @@ import Testing
     let draft = try #require(HackerNewsArticleMapper.draft(from: item, source: source))
 
     #expect(draft.url.absoluteString == "https://news.ycombinator.com/item?id=202")
+}
 }
 
 private func mockHackerNewsSession() -> URLSession {
@@ -170,6 +248,15 @@ private final class MockHackerNewsURLProtocol: URLProtocol, @unchecked Sendable 
     nonisolated(unsafe) private static var timeouts: [URL: TimeInterval] = [:]
     private static let lock = NSLock()
 
+    static func reset() {
+        lock.lock()
+        responses = [:]
+        delays = [:]
+        events = []
+        timeouts = [:]
+        lock.unlock()
+    }
+
     static func register(_ data: Data, for urlString: String, delay: TimeInterval = 0) {
         lock.lock()
         let url = URL(string: urlString)!
@@ -197,6 +284,13 @@ private final class MockHackerNewsURLProtocol: URLProtocol, @unchecked Sendable 
             }
             return id
         }
+    }
+
+    static func requestedPageURLs() -> [URL] {
+        lock.lock()
+        let urls = events.filter(\.isStart).map(\.url).filter { $0.host == "news.ycombinator.com" }
+        lock.unlock()
+        return urls
     }
 
     static func maxConcurrentRequests(forItemIDs ids: [Int]) -> Int {
@@ -233,13 +327,17 @@ private final class MockHackerNewsURLProtocol: URLProtocol, @unchecked Sendable 
     }
 
     override func startLoading() {
-        guard let url = request.url,
-              let data = Self.response(for: url) else {
+        guard let url = request.url else {
             send(statusCode: 404, data: Data())
             return
         }
         Self.record(url: url, isStart: true)
         Self.recordTimeout(request.timeoutInterval, for: url)
+        guard let data = Self.response(for: url) else {
+            send(statusCode: 404, data: Data())
+            Self.record(url: url, isStart: false)
+            return
+        }
         guard let delay = Self.delay(for: url), delay > 0 else {
             send(statusCode: 200, data: data)
             Self.record(url: url, isStart: false)

@@ -12,7 +12,7 @@ import Testing
 @Test func hackerNewsShowWithPointsBuildsTunedFeedURL() {
     let configuration = HackerNewsFeedConfiguration(kind: .show, minimumPoints: 50)
 
-    #expect(HackerNewsFeedURLBuilder.url(for: configuration).absoluteString == "https://hacker-news.firebaseio.com/v0/showstories.json?points=50")
+    #expect(HackerNewsFeedURLBuilder.url(for: configuration).absoluteString == "https://news.ycombinator.com/shownew?points=50")
     #expect(HackerNewsFeedURLBuilder.title(for: configuration) == "Hacker News Show, 50+ points")
 }
 
@@ -31,8 +31,26 @@ import Testing
 @Test func hackerNewsCountClampsToFirebaseLocalLimit() {
     let configuration = HackerNewsFeedConfiguration(kind: .show, count: 250)
 
-    #expect(HackerNewsFeedURLBuilder.url(for: configuration).absoluteString == "https://hacker-news.firebaseio.com/v0/showstories.json?count=200")
+    #expect(HackerNewsFeedURLBuilder.url(for: configuration).absoluteString == "https://news.ycombinator.com/shownew?count=200")
     #expect(HackerNewsFeedURLBuilder.effectiveCount(for: configuration) == 200)
+}
+
+@Test func hackerNewsShowNewURLParsesAsShowConfiguration() throws {
+    let url = try #require(URL(string: "https://news.ycombinator.com/shownew?points=10&comments=2&count=100"))
+    let configuration = try #require(HackerNewsFeedURLBuilder.configuration(from: url))
+
+    #expect(configuration.kind == .show)
+    #expect(configuration.minimumPoints == 10)
+    #expect(configuration.minimumComments == 2)
+    #expect(configuration.count == 100)
+}
+
+@Test func legacyFirebaseShowURLParsesAsShowConfiguration() throws {
+    let url = try #require(URL(string: "https://hacker-news.firebaseio.com/v0/showstories.json?points=50"))
+    let configuration = try #require(HackerNewsFeedURLBuilder.configuration(from: url))
+
+    #expect(configuration.kind == .show)
+    #expect(configuration.minimumPoints == 50)
 }
 
 @Test func legacyHNRSSShowURLParsesAsFirebaseConfiguration() throws {
