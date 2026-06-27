@@ -449,54 +449,33 @@ Default background refresh interval:
 60 minutes
 ```
 
-## Performance Notes
+## Optimization Notes
 
-The feed is backed by `NSCollectionView` rather than a simple SwiftUI `ScrollView`.
+Newsprint is tuned around a simple rule: the main thread should mostly render already-prepared rows. Existing local articles are shown first; network refresh, variant cache warmup, tag loading, and heavier article detail work run after the visible feed is usable.
 
-Reasons:
+The Home feed uses an AppKit-backed `NSCollectionView` instead of a plain SwiftUI `ScrollView`. That gives the app real row reuse, predictable scrolling, and fixed-height card layout. The feed keeps a page of article rows in memory, but only hands a 50/50/50 render window, about 150 rows, to the collection view at a time.
 
-- Real AppKit item reuse.
-- Better control over scrolling.
-- Better behavior with large feeds.
-- Fixed-height native collapsed cards.
-- Measured-height caching only for expanded article cards.
+Feed rows are lightweight snapshots. They contain the title, source, dates, flags, scores, URLs, tags, metadata text, and short preview needed to draw a card. Full `contentHTML`, long body text, and expanded article detail live in a separate detail cache, so the same article body is not duplicated across `All`, `HN`, `Non-HN`, `Hot`, `Newest`, and `Starred` variants.
 
-The app also avoids loading the whole database into the feed:
+The first visible variant is loaded first. Other feed variants are warmed in the background one by one, not as one giant startup job. Switching between `Hot` / `Newest`, `All` / `HN` / `Non-HN`, and `Starred` uses warmed in-memory variants when available; if a variant is missing, Newsprint builds just that variant and swaps it in after a short loading state.
 
-- The active feed path uses off-main SwiftData snapshot fetches.
-- Default page size is 750 articles.
-- A 50/50/50 render window exposes about 150 articles to the collection view at a time.
-- Additional pages load asynchronously near the end of the current page.
-- Counts and tags are fetched separately.
+Collapsed cards use fixed heights, so scrolling does not require measuring every article. Expanded content is the only case that needs dynamic sizing, and expanded detail is cached by article ID. This keeps normal scrolling cheap while still allowing richer expanded cards.
 
-Refresh persistence is batched:
+Feed reads, refresh work, and cache preparation are pushed off the UI path through actor-backed services. The UI-facing store publishes compact state: counts, loading flags, the active query, and the current render window. Counts and tags are fetched separately, and tag loading is deferred because it is useful navigation data, not first-paint data.
 
-- Existing article IDs are checked in batches.
-- New articles are inserted in batch.
-- The feed reloads once after bulk data changes.
+Refresh is staged. Healthy sources use a 4-second fast lane, degraded sources retry in a 16-second recovery lane, and dead sources are skipped during automatic refresh until explicitly refreshed. While fetching, the current feed stays visible and the header shows source progress. The loading animation is reserved for final feed preparation and cache swapping.
 
-Refresh is staged:
+Background and recovery refreshes do not reorder the feed while you are reading. They prepare a pending update and show a quiet `N articles ready` affordance. Applying that update swaps in already-prepared rows instead of doing network or cache work at click time.
 
-- Healthy sources use a 4-second fast lane.
-- Degraded sources retry in a 16-second recovery lane.
-- Dead sources are skipped during automatic refresh until explicitly refreshed.
-- The current feed stays visible while network fetching is in progress.
-- The header shows source progress during refresh.
-- The loading animation is reserved for final feed preparation and cache swapping.
-- Background and recovery refreshes can produce a quiet pending update instead of immediately reordering what you are reading.
+Persistence is batched during refresh. Existing article IDs are checked in groups, new articles are inserted in batches, and SwiftData is saved once per batch path instead of once per article. The visible feed reloads once after bulk data changes.
 
-Feed sorting is cached:
+Hacker News is optimized separately because it is not a normal RSS feed. Show HN uses `news.ycombinator.com/shownew` for newest-order discovery, then fetches structured item metadata from the official Firebase item endpoint. Item requests are bounded so one slow HN item cannot stall the whole refresh.
 
-- Hot and Newest sort bundles are prepared together when feed data changes.
-- Switching Hot/Newest uses cached in-memory snapshots when possible.
-- A missing or stale sort cache shows the loading state briefly while rebuilding off-main.
+Sources management avoids feed work. Adding or removing presets updates cached source display rows locally and does not refresh articles. The Sources table uses precomputed row models so scrolling and tab-like interactions do not repeatedly sort, canonicalize, or rebuild source metadata in the view body.
 
-Startup behavior is optimized:
+Search is debounced so typing does not force a database/filter pass on every keystroke. Newsprint waits briefly for typing to pause, then refreshes the visible result set.
 
-- Cached feed appears first.
-- Background refresh is deferred.
-- Tag loading is deferred.
-- Startup timing logs are available through macOS unified logging.
+The app also uses a resident menu bar agent model. The cached dashboard opens into an instant maximized window, background refresh can continue while the dashboard is hidden, and startup timing logs are available through macOS unified logging.
 
 Startup log stream:
 
